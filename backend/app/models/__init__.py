@@ -5,6 +5,7 @@ from app.models.business import Business
 from app.models.competitor import Competitor
 from app.models.competitor_observation import CompetitorObservation
 from app.models.recommendation import Recommendation
+from app.models.session import Session
 from app.models.subscription import Subscription
 from app.models.user import User
 
@@ -17,5 +18,6 @@ __all__ = [
     "Recommendation",
     "Competitor",
     "CompetitorObservation",
+    "Session",
     "Subscription",
 ]

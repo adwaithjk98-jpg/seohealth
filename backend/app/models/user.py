@@ -9,6 +9,7 @@ from app.models.enums import UserPlan
 
 if TYPE_CHECKING:
     from app.models.business import Business
+    from app.models.session import Session
     from app.models.subscription import Subscription
 
 
@@ -31,5 +32,8 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     subscriptions: Mapped[list["Subscription"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    sessions: Mapped[list["Session"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

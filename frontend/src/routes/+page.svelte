@@ -1,5 +1,6 @@
 <script>
   import { goto } from '$app/navigation';
+  import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
 
   let mode = $state(/** @type {'name' | 'url'} */ ('name'));
   let businessName = $state('');
@@ -23,6 +24,13 @@
     errorMessage = null;
 
     try {
+      // Ensure auth state is hydrated before we attempt the protected POSTs.
+      if (!authState.loaded) await loadCurrentUser();
+      if (!authState.user) {
+        await goto('/login');
+        return;
+      }
+
       const businessPayload =
         mode === 'name'
           ? { name: businessName.trim(), city: city.trim() }
@@ -32,6 +40,12 @@
       const audit = await postJson('/api/audits', { business_id: business.id });
       await goto(`/audits/${audit.audit_id}`);
     } catch (err) {
+      // 401 from backend (e.g. session expired between page load and submit)
+      // → bounce to login.
+      if (err instanceof Error && /401/.test(err.message)) {
+        await goto('/login');
+        return;
+      }
       errorMessage =
         err instanceof Error ? err.message : 'Something went wrong starting your audit.';
       submitting = false;
@@ -42,6 +56,7 @@
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify(body)
     });
     if (!res.ok) {

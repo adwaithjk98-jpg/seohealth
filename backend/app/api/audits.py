@@ -1,13 +1,15 @@
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.auth_deps import current_user
+from app.config import settings
 from app.db import get_db
-from app.models import Audit, Business
+from app.models import Audit, Business, User
 from app.models.enums import AuditStatus, AuditTrigger
 from app.schemas.audit import (
     AuditCreateRequest,
@@ -15,10 +17,26 @@ from app.schemas.audit import (
     AuditDetailResponse,
 )
 from app.services import audit_events
+from app.services import auth as auth_service
 from app.services.audit_runner import run_audit
 from app.services.audit_view import build_audit_detail
 
 router = APIRouter()
+
+
+def _user_owns_business(business: Business, user: User) -> bool:
+    return business.user_id == user.id
+
+
+def _load_audit_for_user(db: Session, audit_id: int, user: User) -> Audit:
+    audit = db.get(Audit, audit_id)
+    if audit is None:
+        raise HTTPException(status_code=404, detail="audit not found")
+    business = db.get(Business, audit.business_id)
+    # Treat "audit owned by another user" as 404 — don't leak existence.
+    if business is None or not _user_owns_business(business, user):
+        raise HTTPException(status_code=404, detail="audit not found")
+    return audit
 
 
 @router.post(
@@ -30,9 +48,10 @@ def create_audit(
     payload: AuditCreateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> AuditCreateResponse:
     business = db.get(Business, payload.business_id)
-    if business is None:
+    if business is None or not _user_owns_business(business, user):
         raise HTTPException(status_code=404, detail="business not found")
 
     audit = Audit(
@@ -56,10 +75,12 @@ def create_audit(
 
 
 @router.get("/audits/{audit_id}", response_model=AuditDetailResponse)
-def get_audit_detail(audit_id: int, db: Session = Depends(get_db)) -> AuditDetailResponse:
-    audit = db.get(Audit, audit_id)
-    if audit is None:
-        raise HTTPException(status_code=404, detail="audit not found")
+def get_audit_detail(
+    audit_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> AuditDetailResponse:
+    audit = _load_audit_for_user(db, audit_id, user)
     return AuditDetailResponse(**build_audit_detail(db, audit))
 
 
@@ -68,10 +89,12 @@ def get_audit_detail(audit_id: int, db: Session = Depends(get_db)) -> AuditDetai
     response_model=AuditDetailResponse,
 )
 def get_latest_audit_for_business(
-    business_id: int, db: Session = Depends(get_db)
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> AuditDetailResponse:
     business = db.get(Business, business_id)
-    if business is None:
+    if business is None or not _user_owns_business(business, user):
         raise HTTPException(status_code=404, detail="business not found")
 
     audit = (
@@ -92,10 +115,28 @@ def _format_sse(event_type: str, data: dict) -> str:
 
 
 @router.get("/audits/{audit_id}/stream")
-def stream_audit(audit_id: int, db: Session = Depends(get_db)) -> StreamingResponse:
+def stream_audit(
+    audit_id: int,
+    db: Session = Depends(get_db),
+    session: str | None = Cookie(default=None, alias=settings.session_cookie_name),
+) -> StreamingResponse:
+    # EventSource doesn't support custom headers, but it does send cookies on
+    # same-origin requests. Authenticate manually via the session cookie so we
+    # can return a streaming response on success.
+    if not session:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    db_session = auth_service.get_session_by_token(db, session)
+    if db_session is None:
+        raise HTTPException(status_code=401, detail="session expired or invalid")
+
     audit = db.get(Audit, audit_id)
     if audit is None:
         raise HTTPException(status_code=404, detail="audit not found")
+    business = db.get(Business, audit.business_id)
+    if business is None or business.user_id != db_session.user_id:
+        raise HTTPException(status_code=404, detail="audit not found")
+
+    audit_status_value = audit.status.value
 
     async def event_generator() -> AsyncIterator[str]:
         stream = audit_events.get_stream(audit_id)
@@ -104,7 +145,7 @@ def stream_audit(audit_id: int, db: Session = Depends(get_db)) -> StreamingRespo
                 "audit_state",
                 {
                     "audit_id": audit_id,
-                    "status": audit.status.value,
+                    "status": audit_status_value,
                     "note": "no live stream available; read the audit record for full state",
                 },
             )

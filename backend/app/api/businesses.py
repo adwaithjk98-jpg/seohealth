@@ -1,26 +1,13 @@
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.auth_deps import current_user
 from app.db import get_db
 from app.models import Business, User
 from app.schemas.business import BusinessCreateRequest, BusinessResponse
 
 router = APIRouter()
-
-# Stand-in until magic-link auth lands. Every business created via the public
-# form is attached to this single shared user; swap to the authenticated user
-# when auth is wired up (see AuditAppPlan.md §5).
-_DEMO_USER_EMAIL = "demo@example.com"
-
-
-def _get_or_create_demo_user(db: Session) -> User:
-    user = db.query(User).filter_by(email=_DEMO_USER_EMAIL).one_or_none()
-    if user is None:
-        user = User(email=_DEMO_USER_EMAIL)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
 
 
 @router.post(
@@ -31,9 +18,8 @@ def _get_or_create_demo_user(db: Session) -> User:
 def create_business(
     payload: BusinessCreateRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> BusinessResponse:
-    user = _get_or_create_demo_user(db)
-
     name = (payload.name or "").strip() or "My business"
     city = (payload.city or "").strip() or "Unknown"
 
@@ -56,3 +42,27 @@ def create_business(
         maps_url=business.maps_url,
         added_at=business.added_at,
     )
+
+
+@router.get("/businesses", response_model=list[BusinessResponse])
+def list_businesses(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[BusinessResponse]:
+    rows = (
+        db.query(Business)
+        .filter(Business.user_id == user.id, Business.archived_at.is_(None))
+        .order_by(desc(Business.added_at))
+        .all()
+    )
+    return [
+        BusinessResponse(
+            id=b.id,
+            name=b.name,
+            city=b.city,
+            country=b.country,
+            maps_url=b.maps_url,
+            added_at=b.added_at,
+        )
+        for b in rows
+    ]

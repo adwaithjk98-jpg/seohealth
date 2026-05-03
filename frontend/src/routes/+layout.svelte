@@ -1,7 +1,44 @@
 <script>
   import '../app.css';
+  import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
+
+  import {
+    authState,
+    loadCurrentUser,
+    logout,
+    isPublicRoute
+  } from '$lib/auth.svelte.js';
 
   let { children } = $props();
+
+  onMount(async () => {
+    if (!authState.loaded) {
+      await loadCurrentUser();
+    }
+    enforceGate($page.url.pathname);
+  });
+
+  // Re-evaluate the gate whenever the route or the loaded user changes.
+  $effect(() => {
+    if (!authState.loaded) return;
+    enforceGate($page.url.pathname);
+  });
+
+  /** @param {string} pathname */
+  function enforceGate(pathname) {
+    // Home is public — the form there nudges signed-out users to /login.
+    // Everything else (dashboard, audits) requires a session.
+    if (pathname === '/' || isPublicRoute(pathname)) return;
+    if (!authState.user) {
+      goto('/login', { replaceState: true });
+    }
+  }
+
+  async function handleLogout() {
+    await logout();
+  }
 </script>
 
 <div class="min-h-screen bg-canvas">
@@ -30,8 +67,13 @@
 
       <nav class="flex items-center gap-1 text-sm">
         <a class="btn-ghost" href="/">Home</a>
-        <a class="btn-ghost" href="/dashboard">Dashboard</a>
-        <a class="btn-ghost" href="/help">Help</a>
+        {#if authState.user}
+          <a class="btn-ghost" href="/dashboard">Dashboard</a>
+          <span class="hidden text-xs text-canvas-muted sm:inline">{authState.user.email}</span>
+          <button type="button" class="btn-ghost" onclick={handleLogout}>Sign out</button>
+        {:else if authState.loaded}
+          <a class="btn-ghost" href="/login">Sign in</a>
+        {/if}
       </nav>
     </div>
   </header>
