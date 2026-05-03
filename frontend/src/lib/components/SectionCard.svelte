@@ -1,5 +1,11 @@
 <script>
-  import { scoreTone, scoreLabel } from '$lib/dashboard.js';
+  import {
+    scoreTone,
+    scoreLabel,
+    trendArrow,
+    trendTone,
+    trendLabel
+  } from '$lib/dashboard.js';
 
   /** @type {{ section: any, href: string }} */
   let { section, href } = $props();
@@ -26,6 +32,19 @@
       action: 'bg-action-50 text-action-700',
       muted: 'bg-canvas-soft text-canvas-muted'
     }[tone]
+  );
+
+  const arrow = $derived(trendArrow(section?.trend));
+  const arrowToneClass = $derived(
+    {
+      healthy: 'bg-healthy-50 text-healthy-700',
+      attention: 'bg-attention-50 text-attention-700',
+      action: 'bg-action-50 text-action-700',
+      muted: 'bg-canvas-soft text-canvas-muted'
+    }[trendTone(section?.trend)]
+  );
+  const trendCopy = $derived(
+    trendLabel(score, section?.previous_score, section?.trend)
   );
 </script>
 
@@ -57,7 +76,18 @@
         {score == null ? '—' : score}
         <span class="text-base font-normal text-canvas-muted">/100</span>
       </p>
-      <p class="text-xs text-canvas-muted">{scoreLabel(score)}</p>
+      <div class="mt-0.5 flex items-center gap-2 text-xs text-canvas-muted">
+        <span>{scoreLabel(score)}</span>
+        {#if arrow}
+          <span
+            class={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-medium ${arrowToneClass}`}
+            aria-label={trendCopy}
+            title={trendCopy}
+          >
+            {arrow}
+          </span>
+        {/if}
+      </div>
     </div>
     <div class="text-right text-xs text-canvas-muted">
       {#if section.summary}

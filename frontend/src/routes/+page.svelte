@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
 
@@ -9,8 +10,13 @@
   let submitting = $state(false);
   let errorMessage = $state(/** @type {string | null} */ (null));
 
+  onMount(async () => {
+    if (!authState.loaded) await loadCurrentUser();
+  });
+
   const canSubmit = $derived(
     !submitting &&
+      authState.user &&
       (mode === 'name'
         ? businessName.trim().length > 0 && city.trim().length > 0
         : mapsUrl.trim().length > 0)
@@ -24,13 +30,6 @@
     errorMessage = null;
 
     try {
-      // Ensure auth state is hydrated before we attempt the protected POSTs.
-      if (!authState.loaded) await loadCurrentUser();
-      if (!authState.user) {
-        await goto('/login');
-        return;
-      }
-
       const businessPayload =
         mode === 'name'
           ? { name: businessName.trim(), city: city.trim() }
@@ -116,6 +115,17 @@
       Tell us how to find you. We'll handle the rest.
     </p>
 
+    {#if authState.loaded && !authState.user}
+      <div class="mt-5 rounded-2xl border border-healthy-100 bg-healthy-50/60 p-4 text-sm text-canvas-ink">
+        <p class="font-medium">Sign in first</p>
+        <p class="mt-1 text-canvas-muted">
+          We'll keep your audits tied to your email so you can come back to your dashboard
+          anytime.
+        </p>
+        <a href="/login" class="btn-primary mt-3 w-full">Sign in to continue</a>
+      </div>
+    {/if}
+
     <div class="mt-5 inline-flex rounded-xl bg-canvas-soft p-1 text-sm">
       <button
         type="button"
@@ -151,6 +161,7 @@
             class="field"
             placeholder="e.g. Brewmorphia"
             autocomplete="organization"
+            disabled={!authState.user}
             bind:value={businessName}
           />
         </div>
@@ -162,6 +173,7 @@
             class="field"
             placeholder="e.g. Calicut"
             autocomplete="address-level2"
+            disabled={!authState.user}
             bind:value={city}
           />
         </div>
@@ -173,6 +185,7 @@
             type="url"
             class="field"
             placeholder="https://maps.app.goo.gl/…"
+            disabled={!authState.user}
             bind:value={mapsUrl}
           />
           <p class="text-xs text-canvas-muted">

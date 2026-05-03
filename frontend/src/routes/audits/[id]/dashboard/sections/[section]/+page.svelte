@@ -163,6 +163,8 @@
           grade={section.grade}
           size={170}
           label="Section score"
+          trend={section.trend}
+          previousScore={section.previous_score}
         />
       </div>
     </header>

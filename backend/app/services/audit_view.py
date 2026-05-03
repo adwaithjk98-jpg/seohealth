@@ -13,10 +13,12 @@ client-rendered, so a single fetch keeps state simple.
 
 from __future__ import annotations
 
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models import Audit, Business, Recommendation
 from app.models.audit_section import AuditSection
+from app.models.enums import AuditStatus
 from app.services.audit_summary import (
     derive_sub_checks,
     grade_from_score,
@@ -26,6 +28,50 @@ from app.services.audit_summary import (
 
 
 SECTION_ORDER = ["maps", "website", "instagram", "nap", "competitors"]
+
+
+# Trend cutoff — score has to move at least this much to count as up/down.
+# A 1-point wobble between audits isn't worth flagging.
+TREND_THRESHOLD = 2
+
+
+def _trend(current: int | None, previous: int | None) -> str | None:
+    if current is None or previous is None:
+        return None
+    diff = current - previous
+    if diff >= TREND_THRESHOLD:
+        return "up"
+    if diff <= -TREND_THRESHOLD:
+        return "down"
+    return "flat"
+
+
+def _previous_section_scores(
+    db: Session, business_id: int, current_audit_id: int
+) -> tuple[dict[str, int | None], int | None]:
+    """Returns ({section_name: score}, overall_score) for the most recent
+    completed audit for this business, excluding the current audit.
+    """
+    prev_audit = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == business_id,
+            Audit.id != current_audit_id,
+            Audit.status == AuditStatus.done,
+        )
+        .order_by(desc(Audit.finished_at), desc(Audit.id))
+        .first()
+    )
+    if prev_audit is None:
+        return {}, None
+    by_section: dict[str, int | None] = {}
+    scores: list[int] = []
+    for sec in prev_audit.sections:
+        by_section[sec.section.value] = sec.score
+        if sec.score is not None:
+            scores.append(sec.score)
+    overall = round(sum(scores) / len(scores)) if scores else None
+    return by_section, overall
 
 
 def build_audit_detail(db: Session, audit: Audit) -> dict:
@@ -43,6 +89,10 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
     for sec, recs in recs_by_section.items():
         recs.sort(key=lambda r: (severity_rank.get(r.severity.value, 99), r.id))
 
+    prev_section_scores, prev_overall = _previous_section_scores(
+        db, audit.business_id, audit.id
+    )
+
     section_payloads = []
     section_scores: list[int] = []
     for sec in sections:
@@ -51,6 +101,7 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         sub_checks = derive_sub_checks(sec.section.value, sec.raw_data_json)
         summary = section_summary(sec.section.value, sec.raw_data_json)
         sec_recs = recs_by_section.get(sec.section.value, [])
+        prev_score = prev_section_scores.get(sec.section.value)
 
         section_payloads.append(
             {
@@ -64,6 +115,8 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
                 "summary": summary,
                 "raw_data": sec.raw_data_json,
                 "sub_checks": sub_checks,
+                "previous_score": prev_score,
+                "trend": _trend(score, prev_score),
                 "recommendations": [
                     _recommendation_payload(r) for r in sec_recs
                 ],
@@ -100,6 +153,8 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         "finished_at": audit.finished_at,
         "overall_score": overall_score,
         "overall_grade": grade_from_score(overall_score),
+        "previous_overall_score": prev_overall,
+        "overall_trend": _trend(overall_score, prev_overall),
         "sections": section_payloads,
         "open_recommendations_count": open_count,
         "done_recommendations_count": done_count,

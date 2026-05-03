@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
@@ -26,6 +27,35 @@ PIPELINE: list[tuple[AuditSectionName, ScraperFn]] = [
 ]
 
 
+# Recommendations don't have a stable id across audits — each audit produces a
+# fresh set. To carry "marked done" forward, we match by (section, title) on
+# the previous completed audit for the same business.
+def _previous_done_titles(
+    db: Session, business_id: int, current_audit_id: int
+) -> set[tuple[str, str]]:
+    prev_audit = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == business_id,
+            Audit.id != current_audit_id,
+            Audit.status == AuditStatus.done,
+        )
+        .order_by(desc(Audit.finished_at), desc(Audit.id))
+        .first()
+    )
+    if prev_audit is None:
+        return set()
+    done = (
+        db.query(Recommendation)
+        .filter(
+            Recommendation.audit_id == prev_audit.id,
+            Recommendation.fix_status == RecommendationFixStatus.done,
+        )
+        .all()
+    )
+    return {(r.section.value, r.title) for r in done}
+
+
 def _to_business_input(business: Business) -> BusinessInput:
     return BusinessInput(
         name=business.name,
@@ -38,7 +68,11 @@ def _to_business_input(business: Business) -> BusinessInput:
 
 
 def _persist_section(
-    db: Session, audit_id: int, section: AuditSectionName, result: SectionResult
+    db: Session,
+    audit_id: int,
+    section: AuditSectionName,
+    result: SectionResult,
+    carried_done_titles: set[tuple[str, str]],
 ) -> None:
     db.add(
         AuditSection(
@@ -49,7 +83,9 @@ def _persist_section(
             raw_data_json=result.raw_data,
         )
     )
+    now = datetime.now(timezone.utc)
     for rec in result.recommendations:
+        already_done = (section.value, rec.title) in carried_done_titles
         db.add(
             Recommendation(
                 audit_id=audit_id,
@@ -59,7 +95,12 @@ def _persist_section(
                 body_markdown=rec.body_markdown,
                 estimated_impact=rec.estimated_impact,
                 estimated_time=rec.estimated_time,
-                fix_status=RecommendationFixStatus.open,
+                fix_status=(
+                    RecommendationFixStatus.done
+                    if already_done
+                    else RecommendationFixStatus.open
+                ),
+                marked_done_at=now if already_done else None,
             )
         )
     db.commit()
@@ -96,6 +137,7 @@ async def run_audit(audit_id: int) -> None:
 
         business_input = _to_business_input(business)
         section_scores: list[int] = []
+        carried_done_titles = _previous_done_titles(db, business.id, audit_id)
 
         for section, scraper in PIPELINE:
             await stream.publish({"type": "section_started", "section": section.value})
@@ -122,7 +164,7 @@ async def run_audit(audit_id: int) -> None:
                 )
                 continue
 
-            _persist_section(db, audit_id, section, result)
+            _persist_section(db, audit_id, section, result, carried_done_titles)
             # A scraper can return SectionResult(status="failed") for soft failures
             # (CAPTCHA, missing input, etc.) — keep those out of the overall average
             # so a missing Instagram handle doesn't tank an otherwise-healthy score.

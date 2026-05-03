@@ -32,3 +32,14 @@ export async function patchRecommendation(recId, fixStatus) {
   if (!res.ok) throw new Error(await readJsonError(res));
   return res.json();
 }
+
+export async function startAudit(businessId) {
+  const res = await fetch('/api/audits', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ business_id: businessId })
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}

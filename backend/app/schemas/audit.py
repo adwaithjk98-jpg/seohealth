@@ -46,6 +46,8 @@ class AuditSectionResponse(BaseModel):
     summary: str | None
     raw_data: dict[str, Any] | None
     sub_checks: list[SubCheckResponse]
+    previous_score: int | None = None
+    trend: str | None = None  # 'up' | 'down' | 'flat' | None
     recommendations: list[RecommendationResponse]
 
 
@@ -65,6 +67,8 @@ class AuditDetailResponse(BaseModel):
     finished_at: datetime | None
     overall_score: int | None
     overall_grade: str
+    previous_overall_score: int | None = None
+    overall_trend: str | None = None  # 'up' | 'down' | 'flat' | None
     sections: list[AuditSectionResponse]
     open_recommendations_count: int
     done_recommendations_count: int

@@ -1,9 +1,41 @@
 <script>
   import { onMount } from 'svelte';
-  import { scoreLabel, scoreTone } from '$lib/dashboard.js';
+  import {
+    scoreLabel,
+    scoreTone,
+    trendArrow,
+    trendTone,
+    trendLabel
+  } from '$lib/dashboard.js';
 
-  /** @type {{ score: number | null, grade?: string, size?: number, label?: string }} */
-  let { score = null, grade = '', size = 220, label = '' } = $props();
+  /** @type {{
+   *   score: number | null,
+   *   grade?: string,
+   *   size?: number,
+   *   label?: string,
+   *   trend?: string | null,
+   *   previousScore?: number | null
+   * }} */
+  let {
+    score = null,
+    grade = '',
+    size = 220,
+    label = '',
+    trend = null,
+    previousScore = null
+  } = $props();
+
+  const arrow = $derived(trendArrow(trend));
+  const arrowTone = $derived(trendTone(trend));
+  const arrowToneClass = $derived(
+    {
+      healthy: 'bg-healthy-50 text-healthy-700',
+      attention: 'bg-attention-50 text-attention-700',
+      action: 'bg-action-50 text-action-700',
+      muted: 'bg-canvas-soft text-canvas-muted'
+    }[arrowTone]
+  );
+  const trendCopy = $derived(trendLabel(score, previousScore, trend));
 
   // Animate the score up from 0 once the gauge mounts.
   let displayed = $state(0);
@@ -88,5 +120,19 @@
   </div>
   {#if friendly}
     <p class="mt-2 text-sm font-medium text-canvas-ink">{friendly}</p>
+  {/if}
+  {#if arrow}
+    <div class="mt-2 flex items-center gap-2 text-xs">
+      <span
+        class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${arrowToneClass}`}
+        aria-label={trendCopy}
+      >
+        <span aria-hidden="true">{arrow}</span>
+        {trend === 'up' ? 'Up' : trend === 'down' ? 'Down' : 'Steady'}
+      </span>
+      {#if trendCopy && trend !== 'flat'}
+        <span class="text-canvas-muted">{trendCopy}</span>
+      {/if}
+    </div>
   {/if}
 </div>

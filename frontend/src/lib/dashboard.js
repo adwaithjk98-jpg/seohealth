@@ -96,6 +96,32 @@ export function topOpenRecommendations(sections, n = 3) {
   return all.slice(0, n);
 }
 
+// Trend helpers — driven by the `trend` field on the audit/section payload.
+// Backend computes the direction (with a 2-point threshold) so the frontend
+// stays in sync with the rule.
+export function trendArrow(trend) {
+  if (trend === 'up') return '↗';
+  if (trend === 'down') return '↘';
+  if (trend === 'flat') return '→';
+  return null;
+}
+
+export function trendTone(trend) {
+  if (trend === 'up') return 'healthy';
+  if (trend === 'down') return 'action';
+  if (trend === 'flat') return 'muted';
+  return 'muted';
+}
+
+export function trendLabel(current, previous, trend) {
+  if (current == null || previous == null) return 'First check';
+  if (trend === 'flat') return 'Holding steady';
+  const delta = current - previous;
+  if (delta > 0) return `Up ${delta} from last check`;
+  if (delta < 0) return `Down ${Math.abs(delta)} from last check`;
+  return '';
+}
+
 // Friendly relative timestamps without dragging in a date library.
 export function formatRelativeTime(iso) {
   if (!iso) return '';

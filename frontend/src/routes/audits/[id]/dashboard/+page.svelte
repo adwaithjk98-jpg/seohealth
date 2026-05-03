@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
 
-  import { getAudit } from '$lib/api.js';
+  import { getAudit, startAudit } from '$lib/api.js';
   import {
     scoreEncouragement,
     severityLabel,
@@ -20,6 +21,8 @@
   let audit = $state(null);
   let loading = $state(true);
   let errorMessage = $state(/** @type {string | null} */ (null));
+  let reauditing = $state(false);
+  let reauditError = $state(/** @type {string | null} */ (null));
 
   onMount(async () => {
     try {
@@ -35,6 +38,19 @@
   const top3 = $derived(topOpenRecommendations(sections, 3));
   const totalOpen = $derived(audit?.open_recommendations_count ?? 0);
   const totalDone = $derived(audit?.done_recommendations_count ?? 0);
+
+  async function handleReaudit() {
+    if (!audit?.business?.id || reauditing) return;
+    reauditing = true;
+    reauditError = null;
+    try {
+      const next = await startAudit(audit.business.id);
+      await goto(`/audits/${next.audit_id}`);
+    } catch (err) {
+      reauditError = err instanceof Error ? err.message : 'Could not kick off a fresh audit.';
+      reauditing = false;
+    }
+  }
 
   const severityToneClasses = {
     healthy: 'bg-healthy-50 text-healthy-700',
@@ -87,6 +103,8 @@
           score={audit.overall_score}
           grade={audit.overall_grade}
           label="Overall health"
+          trend={audit.overall_trend}
+          previousScore={audit.previous_overall_score}
         />
       </div>
     </header>
@@ -167,11 +185,32 @@
       </section>
     {/if}
 
-    <footer class="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <p class="text-xs text-canvas-muted">
-        We re-check your business automatically. Want a fresh check?
-      </p>
-      <a class="btn-ghost" href={`/audits/${auditId}`}>Re-watch the live analysis →</a>
+    <footer
+      class="card flex flex-col gap-4 border border-canvas-soft bg-canvas-soft/30 p-5 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div>
+        <p class="text-sm font-medium text-canvas-ink">Want a fresh check?</p>
+        <p class="text-xs text-canvas-muted">
+          We'll re-run all four pillars and carry your "done" check-marks forward.
+        </p>
+        {#if reauditError}
+          <p class="mt-2 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700">
+            {reauditError}
+          </p>
+        {/if}
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <a class="btn-ghost" href={`/audits/${auditId}`}>Re-watch live analysis</a>
+        <a class="btn-ghost" href="/dashboard">All businesses</a>
+        <button
+          type="button"
+          class="btn-primary"
+          onclick={handleReaudit}
+          disabled={reauditing}
+        >
+          {#if reauditing}Starting…{:else}↻ Re-audit now{/if}
+        </button>
+      </div>
     </footer>
   </section>
 {/if}
