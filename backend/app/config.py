@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     # In production this should be True (HTTPS-only cookie).
     session_cookie_secure: bool = False
 
+    # Email — Resend transactional sender used for magic-link delivery.
+    # When unset, the magic-link sender falls back to printing the link to stdout
+    # (dev mode). Both must be set to actually send mail.
+    resend_api_key: str = ""
+    from_email: str = "Local SEO Health Monitor <onboarding@resend.dev>"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
