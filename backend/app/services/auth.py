@@ -5,8 +5,8 @@ Flow:
      - Find or create the user.
      - Generate a magic-link token (random URL-safe string), store on
        ``users.magic_link_token`` with a short TTL.
-     - "Send" the link by printing it to the console (real email comes later;
-       see the SEND_EMAIL_VIA_CONSOLE comment below).
+     - Hand the link to ``email_service.send_magic_link_email`` for delivery
+       (Resend in production, stdout fallback when no API key is configured).
   2. User clicks the link, which points at the FRONTEND
      (``/auth/verify?token=...``). The frontend page POSTs the token to
      /api/auth/verify.
@@ -70,22 +70,6 @@ def issue_magic_link(db: DbSession, email: str) -> tuple[User, str]:
 def magic_link_url(token: str) -> str:
     base = settings.frontend_base_url.rstrip("/")
     return f"{base}/auth/verify?token={token}"
-
-
-def deliver_magic_link(email: str, link: str) -> None:
-    """Send the magic link.
-
-    For local development we just print the link to stdout. Once Resend (or
-    similar) is wired up, swap this for a real email send. Keeping the
-    interface stable means callers don't have to change.
-    """
-    # SEND_EMAIL_VIA_CONSOLE: in production, replace with a real sender.
-    print(
-        "\n[magic-link] sign-in link for "
-        f"{email}:\n  {link}\n  (expires in "
-        f"{settings.magic_link_ttl_minutes} minutes)\n",
-        flush=True,
-    )
 
 
 # --- Sessions -----------------------------------------------------------------

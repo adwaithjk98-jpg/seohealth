@@ -5,6 +5,11 @@
 
   import { authState, loadCurrentUser, requestMagicLink } from '$lib/auth.svelte.js';
 
+  // Vite injects `import.meta.env.DEV` at build time. We use it to show a
+  // local-dev hint ("link is in the backend terminal") that would only confuse
+  // production users.
+  const isDev = import.meta.env.DEV;
+
   let email = $state('');
   let submitting = $state(false);
   let sent = $state(false);
@@ -27,8 +32,13 @@
       await requestMagicLink(email.trim());
       sent = true;
     } catch (err) {
-      errorMessage =
-        err instanceof Error ? err.message : 'Could not send your sign-in link.';
+      // Backend returns HTTP 500 with a friendly `detail` message when Resend
+      // delivery fails; readJsonError surfaces that as err.message. Fall back
+      // to a generic line if anything else went wrong (network, etc).
+      const raw = err instanceof Error ? err.message : '';
+      errorMessage = raw && !raw.startsWith('Request failed')
+        ? raw
+        : "We couldn't send your sign-in email. Please check your address and try again.";
     } finally {
       submitting = false;
     }
@@ -74,11 +84,28 @@
         </div>
 
         {#if errorMessage}
-          <p class="rounded-xl bg-action-50 px-3 py-2 text-sm text-action-700">{errorMessage}</p>
+          <div
+            class="flex items-start gap-2 rounded-xl bg-action-50 px-3 py-2 text-sm text-action-700"
+            role="alert"
+            in:fade={{ duration: 150 }}
+          >
+            <span aria-hidden="true">⚠️</span>
+            <span>{errorMessage}</span>
+          </div>
         {/if}
 
         <button type="submit" class="btn-primary w-full" disabled={!canSubmit}>
-          {#if submitting}Sending your link…{:else}Email me a sign-in link{/if}
+          {#if submitting}
+            <span class="inline-flex items-center justify-center gap-2">
+              <span
+                class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                aria-hidden="true"
+              ></span>
+              Sending your link…
+            </span>
+          {:else}
+            Email me a sign-in link
+          {/if}
         </button>
 
         <p class="text-center text-xs text-canvas-muted">
@@ -90,15 +117,23 @@
         <div class="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-healthy-50 text-2xl">
           ✉️
         </div>
-        <h2 class="text-lg font-semibold text-canvas-ink">Check your inbox</h2>
+        <h2 class="text-lg font-semibold text-canvas-ink">Check your email!</h2>
         <p class="text-sm text-canvas-muted">
           If <span class="font-medium text-canvas-ink">{email}</span> is registered, a sign-in
           link is on its way. The link is good for the next 15 minutes.
         </p>
-        <p class="rounded-xl bg-canvas-soft px-3 py-2 text-xs text-canvas-muted">
-          Local dev: the link is printed in the backend terminal — copy it and paste it into your
-          browser.
+        <p class="text-xs text-canvas-muted">
+          Don't see it? Check your spam folder, or
+          <button type="button" class="font-medium text-healthy-700 underline" onclick={tryAgain}>
+            try a different email
+          </button>.
         </p>
+        {#if isDev}
+          <p class="rounded-xl bg-canvas-soft px-3 py-2 text-xs text-canvas-muted">
+            <span class="font-medium">Dev tip:</span> if no Resend API key is configured, the
+            link is printed in the backend terminal — copy and paste it into your browser.
+          </p>
+        {/if}
         <button type="button" class="btn-ghost w-full" onclick={tryAgain}>
           Use a different email
         </button>

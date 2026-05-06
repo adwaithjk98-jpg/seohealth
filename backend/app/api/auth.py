@@ -9,6 +9,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import User
 from app.services import auth as auth_service
+from app.services import email_service
 
 router = APIRouter()
 
@@ -68,11 +69,21 @@ def request_magic_link(
 ) -> dict[str, str]:
     """Issue a magic-link email (or, in dev, print it to the console).
 
-    Always returns 202. We don't reveal whether the email is registered —
-    that prevents an attacker from enumerating accounts.
+    On success returns 202. We don't reveal whether the email is registered —
+    that prevents an attacker from enumerating accounts. If the email
+    provider rejects the send, surface a 500 so the user knows to retry
+    rather than silently dropping their sign-in attempt.
     """
     _, token = auth_service.issue_magic_link(db, payload.email)
-    auth_service.deliver_magic_link(payload.email, auth_service.magic_link_url(token))
+    try:
+        email_service.send_magic_link_email(
+            payload.email, auth_service.magic_link_url(token)
+        )
+    except email_service.EmailDeliveryError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="We couldn't send your sign-in email. Please try again in a moment.",
+        )
     return {"message": "If that email is valid, a sign-in link is on its way."}
 
 
