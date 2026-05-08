@@ -175,3 +175,19 @@ def downgrade() -> None:
 
     op.drop_table('users')
     # ### end Alembic commands ###
+
+    # Postgres creates a native TYPE for each named Enum column; drop_table
+    # leaves those types behind, so a subsequent upgrade fails with
+    # "type ... already exists". SQLite has no equivalent, so this is a no-op there.
+    if op.get_bind().dialect.name == 'postgresql':
+        for enum_name in (
+            'recommendation_fix_status',
+            'recommendation_severity',
+            'audit_section_status',
+            'audit_section_name',
+            'audit_trigger',
+            'audit_status',
+            'subscription_status',
+            'user_plan',
+        ):
+            op.execute(f'DROP TYPE IF EXISTS {enum_name}')
