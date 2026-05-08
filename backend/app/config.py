@@ -5,6 +5,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./audithealth.db"
     app_env: str = "development"
 
+    # Redis — used as RQ's transport and (later) the cross-process pub/sub
+    # bridge for SSE audit events. Local default points at a loopback Redis
+    # with no auth on db 0.
+    redis_url: str = "redis://localhost:6379/0"
+
     # Auth — magic-link + cookie session.
     # Where the magic-link points to (i.e. the frontend origin). The user clicks
     # the link from their email, the frontend page reads the token, and POSTs

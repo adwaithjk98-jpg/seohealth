@@ -34,7 +34,14 @@ DEFAULT_USER_AGENT = (
 )
 
 # Cap concurrent Chrome instances. Override with AUDIT_MAX_CONCURRENT_DRIVERS.
-_MAX_CONCURRENT = int(os.getenv("AUDIT_MAX_CONCURRENT_DRIVERS", "2"))
+# This is a process-local threading.Semaphore — it caps drivers within
+# *this* worker process only. The deployment model is one RQ worker
+# process running one job at a time, so the default cap of 1 matches the
+# actual concurrency. Bumping this without also moving to a Redis-backed
+# semaphore (and rethinking horizontal worker scaling) will not give you
+# more parallelism — it will just under-cap a single process. See
+# project_notes.md "Concurrency cap" for the full rationale.
+_MAX_CONCURRENT = int(os.getenv("AUDIT_MAX_CONCURRENT_DRIVERS", "1"))
 _DRIVER_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT)
 
 PAGE_LOAD_TIMEOUT_S = int(os.getenv("AUDIT_PAGE_TIMEOUT", "30"))

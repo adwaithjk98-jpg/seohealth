@@ -1,8 +1,9 @@
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -18,8 +19,8 @@ from app.schemas.audit import (
 )
 from app.services import audit_events
 from app.services import auth as auth_service
-from app.services.audit_runner import run_audit
 from app.services.audit_view import build_audit_detail
+from app.workers.queue import enqueue_audit
 
 router = APIRouter()
 
@@ -46,7 +47,6 @@ def _load_audit_for_user(db: Session, audit_id: int, user: User) -> Audit:
 )
 def create_audit(
     payload: AuditCreateRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> AuditCreateResponse:
@@ -63,8 +63,22 @@ def create_audit(
     db.commit()
     db.refresh(audit)
 
-    audit_events.get_or_create_stream(audit.id)
-    background_tasks.add_task(run_audit, audit.id)
+    # enqueue_audit() XADDs a stream marker before pushing the job, so a
+    # fast SSE client connecting after this returns sees a live stream
+    # key and not an empty one.
+    try:
+        enqueue_audit(audit.id)
+    except RedisConnectionError:
+        # Redis unreachable — drop the orphan row so the user doesn't see
+        # an audit stuck at `pending` forever, then surface a clean 503.
+        # No fallback to in-process execution: that would defeat the
+        # queue's capacity control and hide the outage.
+        db.delete(audit)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audit queue unavailable, please try again shortly",
+        )
 
     return AuditCreateResponse(
         audit_id=audit.id,
