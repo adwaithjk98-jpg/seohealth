@@ -23,12 +23,17 @@ def create_business(
     name = (payload.name or "").strip() or "My business"
     city = (payload.city or "").strip() or "Unknown"
 
+    website = (payload.website or "").strip() or None
+    ig_handle = (payload.ig_handle or "").strip().lstrip("@") or None
+
     business = Business(
         user_id=user.id,
         name=name,
         city=city,
         country=payload.country.strip() or "India",
         maps_url=(payload.maps_url or None) and payload.maps_url.strip(),
+        website=website,
+        ig_handle=ig_handle,
     )
     db.add(business)
     db.commit()
@@ -40,6 +45,8 @@ def create_business(
         city=business.city,
         country=business.country,
         maps_url=business.maps_url,
+        website=business.website,
+        ig_handle=business.ig_handle,
         added_at=business.added_at,
     )
 
@@ -62,6 +69,8 @@ def list_businesses(
             city=b.city,
             country=b.country,
             maps_url=b.maps_url,
+            website=b.website,
+            ig_handle=b.ig_handle,
             added_at=b.added_at,
         )
         for b in rows

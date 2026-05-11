@@ -8,6 +8,8 @@ class BusinessCreateRequest(BaseModel):
     city: str | None = Field(default=None, max_length=255)
     country: str = Field(default="India", max_length=255)
     maps_url: str | None = Field(default=None, max_length=1024)
+    website: str | None = Field(default=None, max_length=1024)
+    ig_handle: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
     def must_identify_business(self) -> "BusinessCreateRequest":
@@ -26,4 +28,6 @@ class BusinessResponse(BaseModel):
     city: str
     country: str
     maps_url: str | None
+    website: str | None
+    ig_handle: str | None
     added_at: datetime

@@ -75,7 +75,16 @@ def _audit_maps_sync(business: BusinessInput) -> SectionResult:
     raw["url"] = driver_current_url_safe(target_url, raw)
     score = _score_maps(raw)
     recommendations = _recommendations(raw)
-    return SectionResult(score=score, status="done", raw_data=raw, recommendations=recommendations)
+    discovered: dict[str, str | None] = {}
+    if raw.get("website_url"):
+        discovered["website"] = raw["website_url"]
+    return SectionResult(
+        score=score,
+        status="done",
+        raw_data=raw,
+        recommendations=recommendations,
+        discovered_fields=discovered,
+    )
 
 
 def driver_current_url_safe(fallback: str, raw: dict[str, Any]) -> str:
@@ -116,7 +125,12 @@ def _extract_panel(driver: WebDriver) -> dict[str, Any]:
         raw["category"] = category
 
     raw["has_hours"] = _has_hours(driver, page_source)
-    raw["has_website_link"] = _has_website_link(driver)
+    website_url = _extract_website_url(driver)
+    raw["has_website_link"] = bool(website_url)
+    if website_url:
+        raw["website_url"] = website_url
+    raw["phone"] = _extract_phone(driver)
+    raw["address"] = _extract_address(driver)
     raw["photo_count"] = _estimate_photo_count(page_source)
     # Reply-to-reviews and recent-review counts require deep panel navigation
     # (clicking "Reviews", scrolling, parsing each card). Surface conservative
@@ -204,17 +218,126 @@ def _has_hours(driver: WebDriver, page_source: str) -> bool:
     return any(token in lowered for token in ("opens ", "closes ", "open 24 hours", "closed ⋅"))
 
 
-def _has_website_link(driver: WebDriver) -> bool:
+# Aggregator domains we never want to treat as the merchant's own website.
+# Mirrors the filter referenced in AuditAppPlan §7 (Outflow `_AGGREGATOR_DOMAINS`).
+_AGGREGATOR_DOMAINS = frozenset(
+    {
+        "justdial.com",
+        "indiamart.com",
+        "sulekha.com",
+        "zomato.com",
+        "swiggy.com",
+        "tripadvisor.com",
+        "tripadvisor.in",
+        "yelp.com",
+        "yellowpages.com",
+        "facebook.com",
+        "m.facebook.com",
+        "instagram.com",
+        "linkedin.com",
+        "twitter.com",
+        "x.com",
+        "youtube.com",
+        "wa.me",
+        "api.whatsapp.com",
+        "g.page",
+        "google.com",
+        "goo.gl",
+        "maps.google.com",
+        "maps.app.goo.gl",
+        "linktr.ee",
+        "beacons.ai",
+    }
+)
+
+
+def _extract_website_url(driver: WebDriver) -> str | None:
+    """Pull the website href from the Maps panel, sanitized.
+
+    Returns the inner URL (Google redirect wrappers stripped, aggregator
+    domains filtered) or None if the panel doesn't expose one we want to use.
+    """
+    href: str | None = None
+    for selector in ("a[data-item-id='authority']", "a[aria-label*='Website']"):
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, selector)
+            href = el.get_attribute("href") or None
+            if href:
+                break
+        except WebDriverException:
+            continue
+    if not href:
+        return None
+
+    inner = _unwrap_google_redirect(href)
+    if not inner:
+        return None
+    if _is_aggregator(inner):
+        return None
+    return inner
+
+
+def _unwrap_google_redirect(url: str) -> str | None:
+    """`https://www.google.com/url?q=https://merchant.com/&...` → inner URL."""
     try:
-        driver.find_element(By.CSS_SELECTOR, "a[data-item-id='authority']")
-        return True
-    except WebDriverException:
-        pass
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return None
+    host = (parsed.netloc or "").lower()
+    if host.endswith("google.com") and parsed.path in ("/url", "/aclk"):
+        params = urllib.parse.parse_qs(parsed.query)
+        for key in ("q", "url"):
+            if key in params and params[key]:
+                inner = params[key][0]
+                if inner.lower().startswith(("http://", "https://")):
+                    return inner
+        return None
+    if not url.lower().startswith(("http://", "https://")):
+        return None
+    return url
+
+
+def _extract_phone(driver: WebDriver) -> str | None:
+    """Pull the phone number from the panel's Phone button (`Phone: +91 …`)."""
     try:
-        driver.find_element(By.CSS_SELECTOR, "a[aria-label*='Website']")
-        return True
+        el = driver.find_element(By.CSS_SELECTOR, "button[data-item-id^='phone:tel:']")
     except WebDriverException:
+        return None
+    label = el.get_attribute("aria-label") or el.text or ""
+    label = label.strip()
+    if not label:
+        return None
+    # Strip the "Phone:" prefix Maps prepends in aria-label.
+    lowered = label.lower()
+    if lowered.startswith("phone:"):
+        label = label[len("Phone:") :].strip()
+    return label or None
+
+
+def _extract_address(driver: WebDriver) -> str | None:
+    """Pull the address from the panel's Address button (aria-label is the full street)."""
+    try:
+        el = driver.find_element(By.CSS_SELECTOR, "button[data-item-id='address']")
+    except WebDriverException:
+        return None
+    label = el.get_attribute("aria-label") or el.text or ""
+    label = label.strip()
+    if not label:
+        return None
+    lowered = label.lower()
+    if lowered.startswith("address:"):
+        label = label[len("Address:") :].strip()
+    return label or None
+
+
+def _is_aggregator(url: str) -> bool:
+    try:
+        host = (urllib.parse.urlparse(url).netloc or "").lower()
+    except ValueError:
         return False
+    if host.startswith("www."):
+        host = host[4:]
+    return host in _AGGREGATOR_DOMAINS
 
 
 def _estimate_photo_count(page_source: str) -> int | None:

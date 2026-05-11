@@ -17,6 +17,11 @@ from app.services import audit_events
 from scrapers import audit_instagram, audit_maps, audit_nap, audit_website
 from scrapers.types import BusinessInput, SectionResult
 
+# Fields a scraper is allowed to fill in on the Business row mid-pipeline.
+# Anything outside this allowlist is ignored — keeps a misbehaving scraper
+# from quietly mutating user-owned columns (city, name, etc.).
+_DISCOVERABLE_FIELDS: frozenset[str] = frozenset({"website", "ig_handle"})
+
 ScraperFn = Callable[[BusinessInput], Awaitable[SectionResult]]
 
 PIPELINE: list[tuple[AuditSectionName, ScraperFn]] = [
@@ -65,6 +70,30 @@ def _to_business_input(business: Business) -> BusinessInput:
         website=business.website,
         ig_handle=business.ig_handle,
     )
+
+
+def _apply_discovered_fields(
+    db: Session, business: Business, discovered: dict[str, str | None]
+) -> bool:
+    """Fill null Business columns from a scraper's discovered_fields.
+
+    Per-field, null-only: a value typed by the user in the form always wins.
+    Returns True if any column was updated (so the caller can refresh inputs).
+    """
+    changed = False
+    for field_name, value in discovered.items():
+        if field_name not in _DISCOVERABLE_FIELDS:
+            continue
+        if not value:
+            continue
+        if getattr(business, field_name, None):
+            continue
+        setattr(business, field_name, value)
+        changed = True
+    if changed:
+        db.commit()
+        db.refresh(business)
+    return changed
 
 
 def _persist_section(
@@ -138,11 +167,20 @@ async def run_audit(audit_id: int) -> None:
         business_input = _to_business_input(business)
         section_scores: list[int] = []
         carried_done_titles = _previous_done_titles(db, business.id, audit_id)
+        # NAP needs to compare against earlier sections' raw_data; we keep a
+        # running map keyed by section name and pass it as a second arg below.
+        prior_raw: dict[str, dict] = {}
 
         for section, scraper in PIPELINE:
             await stream.publish({"type": "section_started", "section": section.value})
             try:
-                result = await scraper(business_input)
+                # NAP has a different signature (takes prior_results) — it's
+                # the only scraper that needs cross-section context, so we
+                # special-case it rather than widening the ScraperFn typedef.
+                if section == AuditSectionName.nap:
+                    result = await scraper(business_input, prior_raw)
+                else:
+                    result = await scraper(business_input)
             except Exception as exc:
                 db.add(
                     AuditSection(
@@ -165,6 +203,11 @@ async def run_audit(audit_id: int) -> None:
                 continue
 
             _persist_section(db, audit_id, section, result, carried_done_titles)
+            prior_raw[section.value] = result.raw_data or {}
+            if result.discovered_fields and _apply_discovered_fields(
+                db, business, result.discovered_fields
+            ):
+                business_input = _to_business_input(business)
             # A scraper can return SectionResult(status="failed") for soft failures
             # (CAPTCHA, missing input, etc.) — keep those out of the overall average
             # so a missing Instagram handle doesn't tank an otherwise-healthy score.

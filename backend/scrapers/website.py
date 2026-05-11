@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -91,14 +92,31 @@ async def audit_website(business: BusinessInput) -> SectionResult:
     og_content = (og_image.get("content") if og_image else None) or ""
     raw["has_og_image"] = bool(og_content.strip())
 
-    raw["has_jsonld_localbusiness"] = _has_localbusiness_jsonld(soup)
+    has_jsonld, jsonld_phone, jsonld_address = _extract_localbusiness_contact(soup)
+    raw["has_jsonld_localbusiness"] = has_jsonld
 
     viewport = head.find("meta", attrs={"name": lambda v: v and v.lower() == "viewport"})
     raw["mobile_viewport"] = bool(viewport and viewport.get("content"))
 
+    raw["phone"] = jsonld_phone or _extract_first_tel(soup)
+    raw["address"] = jsonld_address
+
+    ig_handle = _extract_instagram_handle(soup)
+    if ig_handle:
+        raw["instagram_handle"] = ig_handle
+
     score = _score_website(raw)
     recommendations = _recommendations(raw)
-    return SectionResult(score=score, status="done", raw_data=raw, recommendations=recommendations)
+    discovered: dict[str, str | None] = {}
+    if ig_handle:
+        discovered["ig_handle"] = ig_handle
+    return SectionResult(
+        score=score,
+        status="done",
+        raw_data=raw,
+        recommendations=recommendations,
+        discovered_fields=discovered,
+    )
 
 
 def _normalize_url(url: str) -> str:
@@ -108,7 +126,16 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-def _has_localbusiness_jsonld(soup: BeautifulSoup) -> bool:
+def _extract_localbusiness_contact(
+    soup: BeautifulSoup,
+) -> tuple[bool, str | None, str | None]:
+    """Walk JSON-LD blocks, return (found, telephone, address) for the first
+    LocalBusiness-typed node we encounter.
+
+    Address may be a plain string or a nested ``PostalAddress`` object —
+    when nested, we concatenate streetAddress, addressLocality,
+    addressRegion, postalCode in that order, comma-separated.
+    """
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         text = script.string or script.get_text() or ""
         if not text.strip():
@@ -117,9 +144,76 @@ def _has_localbusiness_jsonld(soup: BeautifulSoup) -> bool:
             data = json.loads(text)
         except (ValueError, json.JSONDecodeError):
             continue
-        if _jsonld_contains_localbusiness(data):
-            return True
-    return False
+        node = _find_localbusiness_node(data)
+        if node is None:
+            continue
+        phone = _stringify_phone(node.get("telephone"))
+        address = _stringify_address(node.get("address"))
+        return True, phone, address
+    return False, None, None
+
+
+def _find_localbusiness_node(data: Any) -> dict[str, Any] | None:
+    if isinstance(data, list):
+        for item in data:
+            found = _find_localbusiness_node(item)
+            if found is not None:
+                return found
+        return None
+    if not isinstance(data, dict):
+        return None
+    graph = data.get("@graph")
+    if isinstance(graph, list):
+        for item in graph:
+            found = _find_localbusiness_node(item)
+            if found is not None:
+                return found
+    type_field = data.get("@type")
+    if isinstance(type_field, str) and type_field.lower() in _LOCALBUSINESS_TYPES:
+        return data
+    if isinstance(type_field, list) and any(
+        isinstance(t, str) and t.lower() in _LOCALBUSINESS_TYPES for t in type_field
+    ):
+        return data
+    return None
+
+
+def _stringify_phone(value: Any) -> str | None:
+    if isinstance(value, list) and value:
+        value = value[0]
+    if isinstance(value, str):
+        s = value.strip()
+        return s or None
+    return None
+
+
+_ADDRESS_FIELDS = ("streetAddress", "addressLocality", "addressRegion", "postalCode")
+
+
+def _stringify_address(value: Any) -> str | None:
+    if isinstance(value, list) and value:
+        value = value[0]
+    if isinstance(value, str):
+        s = value.strip()
+        return s or None
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in _ADDRESS_FIELDS:
+            piece = value.get(key)
+            if isinstance(piece, str) and piece.strip():
+                parts.append(piece.strip())
+        return ", ".join(parts) if parts else None
+    return None
+
+
+def _extract_first_tel(soup: BeautifulSoup) -> str | None:
+    """Fallback when JSON-LD didn't yield a phone: first <a href='tel:...'>."""
+    anchor = soup.find("a", href=lambda h: isinstance(h, str) and h.lower().startswith("tel:"))
+    if anchor is None:
+        return None
+    href = anchor.get("href") or ""
+    target = href.split(":", 1)[1].strip() if ":" in href else ""
+    return target or None
 
 
 _LOCALBUSINESS_TYPES = {
@@ -138,19 +232,52 @@ _LOCALBUSINESS_TYPES = {
 }
 
 
-def _jsonld_contains_localbusiness(data: Any) -> bool:
-    if isinstance(data, list):
-        return any(_jsonld_contains_localbusiness(item) for item in data)
-    if isinstance(data, dict):
-        graph = data.get("@graph")
-        if isinstance(graph, list) and any(_jsonld_contains_localbusiness(g) for g in graph):
-            return True
-        type_field = data.get("@type")
-        if isinstance(type_field, str):
-            return type_field.lower() in _LOCALBUSINESS_TYPES
-        if isinstance(type_field, list):
-            return any(isinstance(t, str) and t.lower() in _LOCALBUSINESS_TYPES for t in type_field)
-    return False
+# Match `instagram.com/<handle>` (with or without `www.`, http or https).
+# The handle group accepts the IG-allowed character set (alphanumeric, `.`, `_`)
+# and stops at the next slash / query / fragment.
+_IG_HREF_PATTERN = re.compile(
+    r"^https?://(?:www\.)?instagram\.com/([A-Za-z0-9._]+)/?(?:[?#].*)?$",
+    re.IGNORECASE,
+)
+# Reserved IG paths that look like a handle but aren't profiles.
+_IG_RESERVED_PATHS = frozenset(
+    {
+        "p",
+        "reel",
+        "reels",
+        "explore",
+        "direct",
+        "stories",
+        "tv",
+        "accounts",
+        "about",
+        "developer",
+        "legal",
+        "press",
+        "web",
+        "challenge",
+        "sessions",
+    }
+)
+
+
+def _extract_instagram_handle(soup: BeautifulSoup) -> str | None:
+    """Return the first valid Instagram profile handle linked from the page."""
+    for anchor in soup.find_all("a", href=True):
+        href = (anchor.get("href") or "").strip()
+        if not href:
+            continue
+        m = _IG_HREF_PATTERN.match(href)
+        if not m:
+            continue
+        candidate = m.group(1)
+        if candidate.lower() in _IG_RESERVED_PATHS:
+            continue
+        # IG handles are 1–30 chars; reject obviously bad shapes.
+        if not (1 <= len(candidate) <= 30):
+            continue
+        return candidate
+    return None
 
 
 # --- scoring + recommendations ----------------------------------------------

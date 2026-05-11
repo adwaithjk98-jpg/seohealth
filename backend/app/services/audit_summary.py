@@ -362,53 +362,53 @@ def _instagram_checks(raw: dict[str, Any]) -> list[SubCheck]:
     return checks
 
 
+_NAP_LEG_LABEL = {
+    "name": "Business name matches everywhere",
+    "phone": "Phone matches everywhere",
+    "address": "Address matches everywhere",
+}
+_NAP_SOURCE_LABEL = {"maps": "Maps", "website": "Website", "instagram": "Instagram"}
+
+
 def _nap_checks(raw: dict[str, Any]) -> list[SubCheck]:
+    """Render the new compare_nap() output shape into Layer 2 sub-checks."""
     checks: list[SubCheck] = []
+    comparison = raw.get("comparison") or {}
+    if not comparison:
+        return checks
 
-    if "name_consistent" in raw:
-        ok = bool(raw["name_consistent"])
+    for leg in ("name", "phone", "address"):
+        leg_data = comparison.get(leg) or {}
+        pairs = leg_data.get("pairs") or {}
+        raw_values = leg_data.get("raw_values") or {}
+
+        decided = [v for v in pairs.values() if v != "n/a"]
+        any_mismatch = any(v == "mismatch" for v in decided)
+
+        if not decided:
+            status = "info"
+            value = "Not enough data to compare"
+        elif any_mismatch:
+            status = "bad"
+            value = "Mismatched"
+        else:
+            status = "good"
+            value = "Consistent"
+
+        # Detail line: show the actual values per source so the user can see
+        # what we're comparing without opening the Layer 3 modal.
+        detail_parts: list[str] = []
+        for src in ("maps", "website", "instagram"):
+            v = raw_values.get(src)
+            if v:
+                detail_parts.append(f"{_NAP_SOURCE_LABEL[src]}: {v}")
+        detail = " · ".join(detail_parts) if detail_parts else None
+
         checks.append(
             SubCheck(
-                label="Business name matches everywhere",
-                status="good" if ok else "warn",
-                value="Consistent" if ok else "Mismatched",
-            )
-        )
-
-    if "phone_consistent" in raw:
-        ok = bool(raw["phone_consistent"])
-        detail = None
-        if not ok:
-            parts = []
-            if raw.get("maps_phone"):
-                parts.append(f"Maps: {raw['maps_phone']}")
-            if raw.get("website_phone"):
-                parts.append(f"Website: {raw['website_phone']}")
-            detail = " · ".join(parts) if parts else None
-        checks.append(
-            SubCheck(
-                label="Phone matches everywhere",
-                status="good" if ok else "bad",
-                value="Consistent" if ok else "Mismatched",
-                detail=detail,
-            )
-        )
-
-    if "address_consistent" in raw:
-        ok = bool(raw["address_consistent"])
-        detail = None
-        if not ok:
-            parts = []
-            if raw.get("maps_address"):
-                parts.append(f"Maps: {raw['maps_address']}")
-            if raw.get("website_address"):
-                parts.append(f"Website: {raw['website_address']}")
-            detail = " · ".join(parts) if parts else None
-        checks.append(
-            SubCheck(
-                label="Address matches everywhere",
-                status="good" if ok else "bad",
-                value="Consistent" if ok else "Mismatched",
+                label=_NAP_LEG_LABEL[leg],
+                status=status,
+                value=value,
                 detail=detail,
             )
         )

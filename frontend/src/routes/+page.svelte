@@ -7,6 +7,8 @@
   let businessName = $state('');
   let city = $state('');
   let mapsUrl = $state('');
+  let website = $state('');
+  let igHandle = $state('');
   let submitting = $state(false);
   let errorMessage = $state(/** @type {string | null} */ (null));
 
@@ -34,6 +36,11 @@
         mode === 'name'
           ? { name: businessName.trim(), city: city.trim() }
           : { maps_url: mapsUrl.trim() };
+
+      const websiteValue = website.trim();
+      if (websiteValue) businessPayload.website = websiteValue;
+      const igValue = igHandle.trim().replace(/^@+/, '');
+      if (igValue) businessPayload.ig_handle = igValue;
 
       const business = await postJson('/api/businesses', businessPayload);
       const audit = await postJson('/api/audits', { business_id: business.id });
@@ -193,6 +200,40 @@
           </p>
         </div>
       {/if}
+
+      <div class="space-y-2">
+        <label class="label" for="website">Website <span class="text-canvas-muted font-normal">(optional)</span></label>
+        <input
+          id="website"
+          type="url"
+          class="field"
+          placeholder="https://yourbusiness.com"
+          autocomplete="url"
+          disabled={!authState.user}
+          bind:value={website}
+        />
+        <p class="text-xs text-canvas-muted">
+          Leave blank and we'll try to find it from your Maps listing.
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <label class="label" for="ig-handle">Instagram handle <span class="text-canvas-muted font-normal">(optional)</span></label>
+        <input
+          id="ig-handle"
+          type="text"
+          class="field"
+          placeholder="@yourbusiness"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          disabled={!authState.user}
+          bind:value={igHandle}
+        />
+        <p class="text-xs text-canvas-muted">
+          Leave blank and we'll try to find it from your website's social links.
+        </p>
+      </div>
 
       {#if errorMessage}
         <p class="rounded-xl bg-action-50 px-3 py-2 text-sm text-action-700">{errorMessage}</p>

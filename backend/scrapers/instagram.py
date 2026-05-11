@@ -38,6 +38,14 @@ META_PATTERN = re.compile(
 EXTERNAL_URL_PATTERN = re.compile(r'"external_url"\s*:\s*"([^"]+)"')
 BIOGRAPHY_PATTERN = re.compile(r'"biography"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
+# Phone-number formats seen in IG bios — international (`+91 …`, `+1 …`) and
+# bare 10-digit Indian. Allow common separators (space, dash, dot, parens) and
+# require a digit count that rules out random IDs / order numbers.
+_PHONE_PATTERNS = (
+    re.compile(r"\+\d[\d\s().\-]{8,17}\d"),  # any +CC … (>= 10 digits total)
+    re.compile(r"(?<!\d)[6-9]\d{9}(?!\d)"),    # bare Indian mobile (starts 6-9)
+)
+
 
 async def audit_instagram(business: BusinessInput) -> SectionResult:
     handle = _normalize_handle(business.ig_handle)
@@ -115,6 +123,10 @@ async def audit_instagram(business: BusinessInput) -> SectionResult:
         raw["external_url"] = external_url
 
     raw["bio_has_location"] = _bio_has_location(biography)
+    raw["phone"] = _extract_phone(biography, body)
+    # IG profiles don't reliably surface a postal address; NAP comparison
+    # treats Instagram address as n/a by design.
+    raw["address"] = None
 
     # Recent-activity / last-post requires the (auth-walled) GraphQL feed.
     # Leave None so the dashboard sub-check renders neutrally.
@@ -197,6 +209,19 @@ def _extract_biography(body: str) -> str | None:
 _LOCATION_HINTS = re.compile(
     r"\b(?:located|location|address|near|in|opp|opposite|behind|beside)\b", re.IGNORECASE
 )
+
+
+def _extract_phone(biography: str | None, body: str) -> str | None:
+    """First plausible phone number found in the bio, then the page body."""
+    sources = [biography or "", body or ""]
+    for source in sources:
+        if not source:
+            continue
+        for pattern in _PHONE_PATTERNS:
+            m = pattern.search(source)
+            if m:
+                return m.group(0).strip()
+    return None
 
 
 def _bio_has_location(biography: str | None) -> bool:

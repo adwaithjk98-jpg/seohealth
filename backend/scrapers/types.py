@@ -27,3 +27,7 @@ class SectionResult:
     status: str
     raw_data: dict[str, Any]
     recommendations: list[RecommendationDraft] = field(default_factory=list)
+    # Channel for one scraper to hand a discovered value (e.g. website URL,
+    # Instagram handle) to a later phase without taking a DB session itself.
+    # The runner is responsible for the null-only merge into the Business row.
+    discovered_fields: dict[str, str | None] = field(default_factory=dict)
