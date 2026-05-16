@@ -47,6 +47,15 @@
       const next = await startAudit(audit.business.id);
       await goto(`/audits/${next.audit_id}`);
     } catch (err) {
+      // 409 — an audit is already running for this business (M4/m10).
+      // Bounce them onto the in-flight live screen rather than dead-ending.
+      if (err instanceof Error) {
+        const match = err.message.match(/running_audit_id["\s:]+(\d+)/);
+        if (match) {
+          await goto(`/audits/${match[1]}`);
+          return;
+        }
+      }
       reauditError = err instanceof Error ? err.message : 'Could not kick off a fresh audit.';
       reauditing = false;
     }
@@ -200,7 +209,6 @@
         {/if}
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <a class="btn-ghost" href={`/audits/${auditId}`}>Re-watch live analysis</a>
         <a class="btn-ghost" href="/dashboard">All businesses</a>
         <button
           type="button"

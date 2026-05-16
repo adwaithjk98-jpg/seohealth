@@ -12,8 +12,33 @@
   let submitting = $state(false);
   let errorMessage = $state(/** @type {string | null} */ (null));
 
+  // Lifecycle gate:
+  //   ready=false   → waiting on auth + an inflight /api/businesses probe
+  //   ready=true & authed user with businesses → already redirected to /dashboard
+  //   ready=true & no user → show "Sign in to start" CTA (no disabled form)
+  //   ready=true & user but no businesses → show the add-business form
+  let ready = $state(false);
+
   onMount(async () => {
     if (!authState.loaded) await loadCurrentUser();
+    if (authState.user) {
+      // M2 — a returning user's home should be their dashboard, not a fresh
+      // "Add your business" form. Only fall through to the form if they
+      // genuinely don't have any businesses yet.
+      try {
+        const res = await fetch('/api/businesses', { credentials: 'same-origin' });
+        if (res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) {
+            await goto('/dashboard', { replaceState: true });
+            return;
+          }
+        }
+      } catch {
+        // Network blip — fall through to the form rather than dead-ending.
+      }
+    }
+    ready = true;
   });
 
   const canSubmit = $derived(
@@ -42,12 +67,48 @@
       const igValue = igHandle.trim().replace(/^@+/, '');
       if (igValue) businessPayload.ig_handle = igValue;
 
-      const business = await postJson('/api/businesses', businessPayload);
-      const audit = await postJson('/api/audits', { business_id: business.id });
+      const businessRes = await fetch('/api/businesses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(businessPayload)
+      });
+
+      // 409 from the duplicate-business guard (M1) — bounce them onto
+      // their existing dashboard instead of clattering on a second copy.
+      if (businessRes.status === 409) {
+        const body = await businessRes.json().catch(() => null);
+        const existingId = body?.detail?.existing_business_id;
+        if (existingId) {
+          await goto(`/businesses/${existingId}`);
+          return;
+        }
+      }
+
+      if (!businessRes.ok) throw new Error(await readError(businessRes));
+      const business = await businessRes.json();
+
+      const auditRes = await fetch('/api/audits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ business_id: business.id })
+      });
+
+      // 409 from the in-flight guard (M4/m10) — bounce onto the running audit.
+      if (auditRes.status === 409) {
+        const body = await auditRes.json().catch(() => null);
+        const runningId = body?.detail?.running_audit_id;
+        if (runningId) {
+          await goto(`/audits/${runningId}`);
+          return;
+        }
+      }
+
+      if (!auditRes.ok) throw new Error(await readError(auditRes));
+      const audit = await auditRes.json();
       await goto(`/audits/${audit.audit_id}`);
     } catch (err) {
-      // 401 from backend (e.g. session expired between page load and submit)
-      // → bounce to login.
       if (err instanceof Error && /401/.test(err.message)) {
         await goto('/login');
         return;
@@ -58,24 +119,11 @@
     }
   }
 
-  async function postJson(url, body) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) {
-      const detail = await safeJsonError(res);
-      throw new Error(detail);
-    }
-    return res.json();
-  }
-
-  async function safeJsonError(res) {
+  async function readError(res) {
     try {
       const data = await res.json();
       if (typeof data?.detail === 'string') return data.detail;
+      if (typeof data?.detail?.message === 'string') return data.detail.message;
       if (Array.isArray(data?.detail) && data.detail[0]?.msg) return data.detail[0].msg;
     } catch {
       // fall through
@@ -117,139 +165,137 @@
   </div>
 
   <div class="card p-6 sm:p-8">
-    <h2 class="text-lg font-semibold text-canvas-ink">Add your business</h2>
-    <p class="mt-1 text-sm text-canvas-muted">
-      Tell us how to find you. We'll handle the rest.
-    </p>
+    {#if !ready}
+      <p class="text-sm text-canvas-muted">Loading…</p>
+    {:else if !authState.user}
+      <h2 class="text-lg font-semibold text-canvas-ink">Sign in to start</h2>
+      <p class="mt-2 text-sm text-canvas-muted">
+        We'll send you a one-tap sign-in link by email, then walk you through your first health
+        check together. Takes about 30 seconds to set up.
+      </p>
+      <a href="/login" class="btn-primary mt-5 w-full">Sign in with email</a>
+      <p class="mt-3 text-center text-xs text-canvas-muted">
+        No password to remember. No card to enter.
+      </p>
+    {:else}
+      <h2 class="text-lg font-semibold text-canvas-ink">Add your business</h2>
+      <p class="mt-1 text-sm text-canvas-muted">
+        Tell us how to find you. We'll handle the rest.
+      </p>
 
-    {#if authState.loaded && !authState.user}
-      <div class="mt-5 rounded-2xl border border-healthy-100 bg-healthy-50/60 p-4 text-sm text-canvas-ink">
-        <p class="font-medium">Sign in first</p>
-        <p class="mt-1 text-canvas-muted">
-          We'll keep your audits tied to your email so you can come back to your dashboard
-          anytime.
-        </p>
-        <a href="/login" class="btn-primary mt-3 w-full">Sign in to continue</a>
+      <div class="mt-5 inline-flex rounded-xl bg-canvas-soft p-1 text-sm">
+        <button
+          type="button"
+          class={`rounded-lg px-3 py-1.5 transition ${
+            mode === 'name'
+              ? 'bg-white text-canvas-ink shadow-soft'
+              : 'text-canvas-muted hover:text-canvas-ink'
+          }`}
+          onclick={() => (mode = 'name')}
+        >
+          Name &amp; city
+        </button>
+        <button
+          type="button"
+          class={`rounded-lg px-3 py-1.5 transition ${
+            mode === 'url'
+              ? 'bg-white text-canvas-ink shadow-soft'
+              : 'text-canvas-muted hover:text-canvas-ink'
+          }`}
+          onclick={() => (mode = 'url')}
+        >
+          Google Maps URL
+        </button>
       </div>
-    {/if}
 
-    <div class="mt-5 inline-flex rounded-xl bg-canvas-soft p-1 text-sm">
-      <button
-        type="button"
-        class={`rounded-lg px-3 py-1.5 transition ${
-          mode === 'name'
-            ? 'bg-white text-canvas-ink shadow-soft'
-            : 'text-canvas-muted hover:text-canvas-ink'
-        }`}
-        onclick={() => (mode = 'name')}
-      >
-        Name &amp; city
-      </button>
-      <button
-        type="button"
-        class={`rounded-lg px-3 py-1.5 transition ${
-          mode === 'url'
-            ? 'bg-white text-canvas-ink shadow-soft'
-            : 'text-canvas-muted hover:text-canvas-ink'
-        }`}
-        onclick={() => (mode = 'url')}
-      >
-        Google Maps URL
-      </button>
-    </div>
+      <form class="mt-5 space-y-4" onsubmit={handleSubmit}>
+        {#if mode === 'name'}
+          <div class="space-y-2">
+            <label class="label" for="business-name">Business name</label>
+            <input
+              id="business-name"
+              type="text"
+              class="field"
+              placeholder="e.g. Brewmorphia"
+              autocomplete="organization"
+              bind:value={businessName}
+            />
+          </div>
+          <div class="space-y-2">
+            <label class="label" for="city">City</label>
+            <input
+              id="city"
+              type="text"
+              class="field"
+              placeholder="e.g. Calicut"
+              autocomplete="address-level2"
+              bind:value={city}
+            />
+          </div>
+        {:else}
+          <div class="space-y-2">
+            <label class="label" for="maps-url">Google Maps URL</label>
+            <input
+              id="maps-url"
+              type="url"
+              class="field"
+              placeholder="https://maps.app.goo.gl/…"
+              bind:value={mapsUrl}
+            />
+            <p class="text-xs text-canvas-muted">
+              Open your listing in Google Maps and paste the share link.
+            </p>
+          </div>
+        {/if}
 
-    <form class="mt-5 space-y-4" onsubmit={handleSubmit}>
-      {#if mode === 'name'}
         <div class="space-y-2">
-          <label class="label" for="business-name">Business name</label>
+          <label class="label" for="website">Website <span class="text-canvas-muted font-normal">(optional)</span></label>
           <input
-            id="business-name"
-            type="text"
-            class="field"
-            placeholder="e.g. Brewmorphia"
-            autocomplete="organization"
-            disabled={!authState.user}
-            bind:value={businessName}
-          />
-        </div>
-        <div class="space-y-2">
-          <label class="label" for="city">City</label>
-          <input
-            id="city"
-            type="text"
-            class="field"
-            placeholder="e.g. Calicut"
-            autocomplete="address-level2"
-            disabled={!authState.user}
-            bind:value={city}
-          />
-        </div>
-      {:else}
-        <div class="space-y-2">
-          <label class="label" for="maps-url">Google Maps URL</label>
-          <input
-            id="maps-url"
+            id="website"
             type="url"
             class="field"
-            placeholder="https://maps.app.goo.gl/…"
-            disabled={!authState.user}
-            bind:value={mapsUrl}
+            placeholder="https://yourbusiness.com"
+            autocomplete="url"
+            bind:value={website}
           />
           <p class="text-xs text-canvas-muted">
-            Open your listing in Google Maps and paste the share link.
+            Leave blank and we'll try to find it from your Maps listing.
           </p>
         </div>
-      {/if}
 
-      <div class="space-y-2">
-        <label class="label" for="website">Website <span class="text-canvas-muted font-normal">(optional)</span></label>
-        <input
-          id="website"
-          type="url"
-          class="field"
-          placeholder="https://yourbusiness.com"
-          autocomplete="url"
-          disabled={!authState.user}
-          bind:value={website}
-        />
-        <p class="text-xs text-canvas-muted">
-          Leave blank and we'll try to find it from your Maps listing.
-        </p>
-      </div>
+        <div class="space-y-2">
+          <label class="label" for="ig-handle">Instagram handle <span class="text-canvas-muted font-normal">(optional)</span></label>
+          <input
+            id="ig-handle"
+            type="text"
+            class="field"
+            placeholder="@yourbusiness"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            bind:value={igHandle}
+          />
+          <p class="text-xs text-canvas-muted">
+            Leave blank and we'll try to find it from your website's social links.
+          </p>
+        </div>
 
-      <div class="space-y-2">
-        <label class="label" for="ig-handle">Instagram handle <span class="text-canvas-muted font-normal">(optional)</span></label>
-        <input
-          id="ig-handle"
-          type="text"
-          class="field"
-          placeholder="@yourbusiness"
-          autocapitalize="none"
-          autocorrect="off"
-          spellcheck="false"
-          disabled={!authState.user}
-          bind:value={igHandle}
-        />
-        <p class="text-xs text-canvas-muted">
-          Leave blank and we'll try to find it from your website's social links.
-        </p>
-      </div>
-
-      {#if errorMessage}
-        <p class="rounded-xl bg-action-50 px-3 py-2 text-sm text-action-700">{errorMessage}</p>
-      {/if}
-
-      <button type="submit" class="btn-primary w-full" disabled={!canSubmit}>
-        {#if submitting}
-          Starting your health check…
-        {:else}
-          Start my free health check
+        {#if errorMessage}
+          <p class="rounded-xl bg-action-50 px-3 py-2 text-sm text-action-700">{errorMessage}</p>
         {/if}
-      </button>
 
-      <p class="text-center text-xs text-canvas-muted">
-        Takes about 5–10 minutes. We'll show you each step as it runs.
-      </p>
-    </form>
+        <button type="submit" class="btn-primary w-full" disabled={!canSubmit}>
+          {#if submitting}
+            Starting your health check…
+          {:else}
+            Start my free health check
+          {/if}
+        </button>
+
+        <p class="text-center text-xs text-canvas-muted">
+          Takes about 5–10 minutes. We'll show you each step as it runs.
+        </p>
+      </form>
+    {/if}
   </div>
 </section>

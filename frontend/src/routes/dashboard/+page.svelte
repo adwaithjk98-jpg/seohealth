@@ -5,27 +5,36 @@
   import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
+  import { trendArrow, trendTone, scoreTone, formatRelativeTime } from '$lib/dashboard.js';
 
-  let businesses = $state(/** @type {any[]} */ ([]));
-  let loading = $state(true);
-  let errorMessage = $state(/** @type {string | null} */ (null));
+  /** @type {{ data: { businesses: any[] | null, error: string | null } }} */
+  let { data } = $props();
+
+  const businesses = $derived(data?.businesses ?? []);
+  const errorMessage = $derived(
+    data?.error && data.error !== 'unauthenticated' ? data.error : null
+  );
 
   onMount(async () => {
     if (!authState.loaded) await loadCurrentUser();
-    if (!authState.user) {
+    if (!authState.user || data?.error === 'unauthenticated') {
       await goto('/login', { replaceState: true });
-      return;
-    }
-    try {
-      const res = await fetch('/api/businesses', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`Couldn't load your businesses (${res.status})`);
-      businesses = await res.json();
-    } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Could not load your businesses.';
-    } finally {
-      loading = false;
     }
   });
+
+  const trendToneClass = {
+    healthy: 'bg-healthy-50 text-healthy-700',
+    attention: 'bg-attention-50 text-attention-700',
+    action: 'bg-action-50 text-action-700',
+    muted: 'bg-canvas-soft text-canvas-muted'
+  };
+
+  const gradeToneClass = {
+    healthy: 'bg-healthy-50 text-healthy-700',
+    attention: 'bg-attention-50 text-attention-700',
+    action: 'bg-action-50 text-action-700',
+    muted: 'bg-canvas-soft text-canvas-muted'
+  };
 </script>
 
 <section class="space-y-8">
@@ -44,9 +53,7 @@
     </p>
   </header>
 
-  {#if loading}
-    <p class="text-sm text-canvas-muted">Loading your businesses…</p>
-  {:else if errorMessage}
+  {#if errorMessage}
     <div class="card border border-action-100 bg-action-50 p-6 text-sm text-action-700">
       <p class="font-medium">{errorMessage}</p>
     </div>
@@ -62,16 +69,53 @@
   {:else}
     <div class="grid gap-4 sm:grid-cols-2">
       {#each businesses as biz, i (biz.id)}
+        {@const tone = scoreTone(biz.latest_score)}
+        {@const arrow = trendArrow(biz.latest_trend)}
         <a
-          href={`/businesses/${biz.id}`}
-          class="card flex flex-col gap-2 p-5 transition hover:border-canvas-muted/30 hover:shadow-soft"
+          href={biz.running_audit_id
+            ? `/audits/${biz.running_audit_id}`
+            : `/businesses/${biz.id}`}
+          class="card flex flex-col gap-3 p-5 transition hover:border-canvas-muted/30 hover:shadow-soft"
           in:fly={{ y: 12, delay: 60 * i, duration: 320, easing: quintOut }}
         >
-          <p class="text-base font-semibold text-canvas-ink">{biz.name}</p>
-          <p class="text-xs text-canvas-muted">{biz.city} · {biz.country}</p>
-          <span class="mt-2 inline-flex items-center gap-1 text-xs font-medium text-healthy-700">
-            See latest health check →
-          </span>
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="truncate text-base font-semibold text-canvas-ink">{biz.name}</p>
+              <p class="text-xs text-canvas-muted">{biz.city} · {biz.country}</p>
+            </div>
+            {#if biz.latest_grade}
+              <span
+                class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${gradeToneClass[tone]}`}
+                title={biz.latest_score != null ? `Score ${biz.latest_score}/100` : ''}
+              >
+                {biz.latest_grade}
+                {#if arrow}
+                  <span class={`text-[10px] ${trendToneClass[trendTone(biz.latest_trend)]} rounded-full px-1`}>
+                    {arrow}
+                  </span>
+                {/if}
+              </span>
+            {/if}
+          </div>
+
+          {#if biz.running_audit_id}
+            <p class="inline-flex items-center gap-1.5 text-xs font-medium text-healthy-700">
+              <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-healthy-500"></span>
+              Health check in progress · watch it live →
+            </p>
+          {:else if biz.latest_audit_finished_at}
+            <p class="text-xs text-canvas-muted">
+              Last checked {formatRelativeTime(biz.latest_audit_finished_at)}
+            </p>
+            <span class="mt-auto inline-flex items-center gap-1 text-xs font-medium text-healthy-700">
+              See latest health check →
+            </span>
+          {:else}
+            <p class="text-xs text-canvas-muted">No health check yet.</p>
+            <span class="mt-auto inline-flex items-center gap-1 text-xs font-medium text-healthy-700">
+              Start a health check →
+            </span>
+          {/if}
         </a>
       {/each}
     </div>

@@ -4,7 +4,8 @@
   import { goto } from '$app/navigation';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
-  import { defaultPhase } from '$lib/audit-phases.js';
+  import { defaultPhase, progressCopy } from '$lib/audit-phases.js';
+  import { getAudit, startAudit } from '$lib/api.js';
 
   const auditId = $derived(parseInt($page.params.id, 10));
 
@@ -13,9 +14,18 @@
   let overallScore = $state(null);
   let isComplete = $state(false);
   let errorMessage = $state(null);
+  let stalled = $state(false);
+  let retrying = $state(false);
+  let retryError = $state(/** @type {string | null} */ (null));
 
   /** @type {EventSource | null} */
   let source = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let stalledTimer = null;
+  // Audit jobs cap at ~10min; "taking longer than usual" copy at 90s of
+  // no new section_completed event is the sweet spot — long enough to
+  // not nag a healthy run, short enough to soften the wait on a slow one.
+  const STALLED_AFTER_MS = 90_000;
 
   function ensurePhase(section) {
     if (phases.find((p) => p.section === section)) return;
@@ -26,16 +36,42 @@
     phases = phases.map((p) => (p.section === section ? { ...p, ...patch } : p));
   }
 
+  function bumpStalledTimer() {
+    stalled = false;
+    if (stalledTimer) clearTimeout(stalledTimer);
+    stalledTimer = setTimeout(() => {
+      stalled = true;
+    }, STALLED_AFTER_MS);
+  }
+
+  function clearStalledTimer() {
+    if (stalledTimer) {
+      clearTimeout(stalledTimer);
+      stalledTimer = null;
+    }
+    stalled = false;
+  }
+
   function handleAuditStarted(event) {
     const data = JSON.parse(event.data);
     business = data.business ?? null;
     phases = (data.sections ?? []).map((s) => ({ ...defaultPhase(s), state: 'pending' }));
+    bumpStalledTimer();
   }
 
   function handleSectionStarted(event) {
     const data = JSON.parse(event.data);
     ensurePhase(data.section);
     updatePhase(data.section, { state: 'running' });
+    bumpStalledTimer();
+  }
+
+  function handleSectionProgress(event) {
+    const data = JSON.parse(event.data);
+    ensurePhase(data.section);
+    const copy = progressCopy(data.section, data.step, data.detail);
+    if (copy) updatePhase(data.section, { progressLine: copy });
+    bumpStalledTimer();
   }
 
   function handleSectionCompleted(event) {
@@ -50,18 +86,21 @@
       recCount: data.recommendation_count ?? 0,
       error: data.error ?? null
     });
+    bumpStalledTimer();
   }
 
   function handleAuditCompleted(event) {
     const data = JSON.parse(event.data);
     overallScore = data.overall_score ?? null;
     isComplete = true;
+    clearStalledTimer();
     closeStream();
   }
 
   function handleAuditFailed(event) {
     const data = JSON.parse(event.data);
     errorMessage = data.error || 'Something went wrong while running your audit.';
+    clearStalledTimer();
     closeStream();
   }
 
@@ -72,22 +111,81 @@
     }
   }
 
-  onMount(() => {
+  /**
+   * Pre-subscription status probe (B2): a user landing on /audits/{id} for
+   * an audit that is *already* done or failed must not be left staring at
+   * the live-streaming UI. We hit /api/audits/{id} once; if the audit
+   * already terminated, short-circuit (redirect on done, render the
+   * recovery surface on failed) and never open the SSE connection.
+   */
+  async function checkExistingStatus() {
+    try {
+      const audit = await getAudit(auditId);
+      if (audit.status === 'done') {
+        await goto(`/audits/${auditId}/dashboard`, { replaceState: true });
+        return 'terminal';
+      }
+      if (audit.status === 'failed') {
+        business = audit.business ?? null;
+        errorMessage =
+          audit.error_message || 'Something went wrong while running your audit.';
+        return 'terminal';
+      }
+      return 'live';
+    } catch (err) {
+      // 404 / 401 / network — fall through to the SSE attempt; if the
+      // audit really doesn't exist, the stream endpoint will surface it.
+      return 'live';
+    }
+  }
+
+  async function handleRetry() {
+    if (!business?.id || retrying) return;
+    retrying = true;
+    retryError = null;
+    try {
+      const next = await startAudit(business.id);
+      await goto(`/audits/${next.audit_id}`, { replaceState: true });
+    } catch (err) {
+      // 409 = an audit is already running for this business (M4/m10);
+      // bounce them onto that one instead of dead-ending.
+      if (err instanceof Error) {
+        const match = err.message.match(/running_audit_id["\s:]+(\d+)/);
+        if (match) {
+          await goto(`/audits/${match[1]}`, { replaceState: true });
+          return;
+        }
+      }
+      retryError =
+        err instanceof Error ? err.message : 'Could not kick off a fresh audit.';
+      retrying = false;
+    }
+  }
+
+  onMount(async () => {
     if (Number.isNaN(auditId)) {
       errorMessage = 'Audit not found.';
       return;
     }
 
+    const state = await checkExistingStatus();
+    if (state === 'terminal') return;
+
     source = new EventSource(`/api/audits/${auditId}/stream`);
     source.addEventListener('audit_started', handleAuditStarted);
     source.addEventListener('section_started', handleSectionStarted);
+    source.addEventListener('section_progress', handleSectionProgress);
     source.addEventListener('section_completed', handleSectionCompleted);
     source.addEventListener('audit_completed', handleAuditCompleted);
     source.addEventListener('audit_failed', handleAuditFailed);
     // Note: backend buffers events, so a delayed connection still replays from the start.
+    bumpStalledTimer();
   });
 
-  onDestroy(closeStream);
+  onDestroy(() => {
+    closeStream();
+    clearStalledTimer();
+  });
 
   function viewDashboard() {
     goto(`/audits/${auditId}/dashboard`);
@@ -127,6 +225,11 @@
     </h1>
     {#if business?.city}
       <p class="mt-1 text-sm text-canvas-muted">{business.city}</p>
+    {/if}
+    {#if stalled && !errorMessage && !isComplete}
+      <p class="mt-3 text-xs text-canvas-muted" in:fade={{ duration: 250 }}>
+        Taking a little longer than usual — hang tight, we'll keep you posted.
+      </p>
     {/if}
   </header>
 
@@ -188,6 +291,12 @@
             </div>
           </div>
 
+          {#if phase.state === 'running' && phase.progressLine}
+            <p class="mt-1.5 text-sm text-canvas-muted" in:fade={{ duration: 250 }}>
+              {phase.progressLine}
+            </p>
+          {/if}
+
           {#if phase.state === 'done'}
             <div class="mt-1.5 space-y-0.5 text-sm text-canvas-muted" in:fade={{ duration: 250 }}>
               {#if phase.summary}
@@ -222,9 +331,26 @@
       class="mt-8 rounded-2xl border border-action-100 bg-action-50 p-5 text-sm text-action-700"
       in:fade={{ duration: 250 }}
     >
-      <p class="font-medium">We couldn't finish this one.</p>
+      <p class="font-medium">
+        Something went wrong while checking on {business?.name ?? 'your business'}.
+      </p>
       <p class="mt-1 text-action-700/80">{errorMessage}</p>
-      <a class="btn-ghost mt-3 px-0 text-action-700" href="/">Try again →</a>
+      {#if retryError}
+        <p class="mt-3 rounded-xl bg-white/60 px-3 py-2 text-xs">{retryError}</p>
+      {/if}
+      <div class="mt-4 flex flex-wrap gap-2">
+        {#if business?.id}
+          <button
+            type="button"
+            class="btn-primary"
+            disabled={retrying}
+            onclick={handleRetry}
+          >
+            {#if retrying}Starting…{:else}↻ Try again{/if}
+          </button>
+        {/if}
+        <a class="btn-ghost text-action-700" href="/dashboard">Back to your dashboard</a>
+      </div>
     </div>
   {:else if isComplete}
     <div

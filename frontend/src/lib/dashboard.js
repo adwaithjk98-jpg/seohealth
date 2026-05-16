@@ -83,16 +83,32 @@ export function impactLabel(impact) {
   return impact;
 }
 
-// Pull the top N open recommendations across all sections by severity.
+// Pull the top N open recommendations across all sections.
+// Sort: trending-down sections first (a score that just dropped is the
+// thing the user most wants to know about), then by severity, then by id.
+// Implements §2's "Your Instagram is doing great — let's give your website
+// a little love next" framing: a downward delta speaks louder than a
+// statically-high-severity finding from a healthy pillar.
 export function topOpenRecommendations(sections, n = 3) {
+  const trendBoost = { down: 0, flat: 1, up: 2 };
   const all = [];
   for (const section of sections ?? []) {
     for (const rec of section.recommendations ?? []) {
       if (rec.fix_status !== 'open') continue;
-      all.push({ ...rec, sectionLabel: section.label, sectionEmoji: section.emoji });
+      all.push({
+        ...rec,
+        sectionLabel: section.label,
+        sectionEmoji: section.emoji,
+        sectionTrend: section.trend ?? null
+      });
     }
   }
-  all.sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || a.id - b.id);
+  all.sort(
+    (a, b) =>
+      (trendBoost[a.sectionTrend] ?? 1) - (trendBoost[b.sectionTrend] ?? 1) ||
+      severityRank(a.severity) - severityRank(b.severity) ||
+      a.id - b.id
+  );
   return all.slice(0, n);
 }
 
@@ -123,6 +139,8 @@ export function trendLabel(current, previous, trend) {
 }
 
 // Friendly relative timestamps without dragging in a date library.
+// Always returns a relative form — never an absolute date — so the dashboard
+// header stays consistent and dodges DD/MM vs MM/DD locale ambiguity.
 export function formatRelativeTime(iso) {
   if (!iso) return '';
   const then = new Date(iso);
@@ -136,5 +154,13 @@ export function formatRelativeTime(iso) {
   const diffDay = Math.round(diffHr / 24);
   if (diffDay === 1) return 'yesterday';
   if (diffDay < 7) return `${diffDay} days ago`;
-  return then.toLocaleDateString();
+  const diffWeek = Math.round(diffDay / 7);
+  if (diffWeek === 1) return 'a week ago';
+  if (diffWeek < 5) return `${diffWeek} weeks ago`;
+  const diffMonth = Math.round(diffDay / 30);
+  if (diffMonth === 1) return 'a month ago';
+  if (diffMonth < 12) return `${diffMonth} months ago`;
+  const diffYear = Math.round(diffDay / 365);
+  if (diffYear === 1) return 'a year ago';
+  return `${diffYear} years ago`;
 }

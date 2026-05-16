@@ -81,6 +81,28 @@ export function defaultPhase(section) {
   );
 }
 
+// Friendly copy for the section_progress sub-step events the runner emits.
+// Keep additions in line with whatever steps scrapers actually fire — an
+// unknown step falls back to a generic "still working" line.
+export function progressCopy(section, step, detail) {
+  if (section === 'maps') {
+    if (step === 'looking_up') return 'Searching Google Maps…';
+    if (step === 'reading_listing') return 'Reading your listing…';
+    if (step === 'found_listing') {
+      if (detail?.rating != null && detail?.review_count != null) {
+        return `Found you — ${detail.rating} ★ (${formatNumber(detail.review_count)} reviews)`;
+      }
+      return 'Found your listing.';
+    }
+    if (step === 'listing_not_found') return "Couldn't find your listing.";
+  }
+  if (section === 'website') {
+    if (step === 'fetching') return 'Fetching your homepage…';
+    if (step === 'parsing') return 'Reading the page…';
+  }
+  return null;
+}
+
 function formatNumber(n) {
   return new Intl.NumberFormat('en-IN').format(n);
 }

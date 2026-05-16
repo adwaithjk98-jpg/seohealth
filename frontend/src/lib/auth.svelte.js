@@ -36,15 +36,14 @@ export async function loadCurrentUser() {
   if (authState.loading) return authState.user;
   authState.loading = true;
   try {
-    const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
-    if (res.status === 401) {
-      authState.user = null;
-    } else if (res.ok) {
-      authState.user = await res.json();
+    // /auth/session returns 200 with { user: null } when no valid session,
+    // so the page-load probe doesn't fill the console with red 401s.
+    const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    if (res.ok) {
+      const body = await res.json();
+      authState.user = body?.user ?? null;
     } else {
-      // Anything other than 401/200 — leave user untouched, surface no error.
-      // (We're loading on every layout mount; transient 5xx shouldn't bounce
-      // the user to /login.)
+      // Transient 5xx → leave user untouched so we don't bounce to /login.
     }
   } catch {
     // network error — treat as not signed in

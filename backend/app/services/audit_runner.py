@@ -1,5 +1,8 @@
+import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -171,8 +174,41 @@ async def run_audit(audit_id: int) -> None:
         # running map keyed by section name and pass it as a second arg below.
         prior_raw: dict[str, dict] = {}
 
+        # Built per-section so the progress events carry the right section name
+        # without each scraper having to know its own slug.
+        loop = asyncio.get_running_loop()
+
+        def _make_progress_cb(section_name: str):
+            """Return a sync callback the scraper invokes from any thread.
+
+            Scrapers run in a worker thread (asyncio.to_thread), so the
+            callback bridges back into the running loop via
+            ``call_soon_threadsafe`` rather than touching the stream
+            directly. Best-effort: if publishing fails we swallow it so
+            a flaky bus doesn't tank a real audit run.
+            """
+
+            def _cb(step: str, detail: dict | None = None) -> None:
+                event = {
+                    "type": "section_progress",
+                    "section": section_name,
+                    "step": step,
+                    "detail": detail or {},
+                }
+                try:
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(stream.publish(event))
+                    )
+                except RuntimeError:
+                    # Loop is shutting down; intermediate narration isn't
+                    # important enough to take down the audit for.
+                    pass
+
+            return _cb
+
         for section, scraper in PIPELINE:
             await stream.publish({"type": "section_started", "section": section.value})
+            progress_cb = _make_progress_cb(section.value)
             try:
                 # NAP has a different signature (takes prior_results) — it's
                 # the only scraper that needs cross-section context, so we
@@ -180,7 +216,15 @@ async def run_audit(audit_id: int) -> None:
                 if section == AuditSectionName.nap:
                     result = await scraper(business_input, prior_raw)
                 else:
-                    result = await scraper(business_input)
+                    # Scrapers that accept a progress callback (Maps, etc.)
+                    # narrate sub-steps; older ones that don't are called
+                    # without it. We sniff via the parameter list so adding
+                    # callbacks to other scrapers needs no runner changes.
+                    sig = inspect.signature(scraper)
+                    if "progress" in sig.parameters:
+                        result = await scraper(business_input, progress=progress_cb)  # type: ignore[call-arg]
+                    else:
+                        result = await scraper(business_input)
             except Exception as exc:
                 db.add(
                     AuditSection(

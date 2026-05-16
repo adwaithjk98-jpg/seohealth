@@ -106,6 +106,15 @@
     action: 'bg-action-50 text-action-700 border-action-100',
     muted: 'bg-canvas-soft text-canvas-muted border-canvas-soft'
   };
+
+  // m9 — color the sub-check glyph so ✓ / ! / × actually triage at a glance
+  // instead of all reading as monochrome. Matches §2's traffic-light principle.
+  const subCheckGlyphClasses = {
+    healthy: 'bg-healthy-500 text-white',
+    attention: 'bg-attention-500 text-white',
+    action: 'bg-action-500 text-white',
+    muted: 'bg-white text-canvas-muted'
+  };
 </script>
 
 {#if loading}
@@ -185,7 +194,7 @@
               in:fly={{ y: 8, delay: 40 * i, duration: 280, easing: quintOut }}
             >
               <span
-                class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white text-sm font-semibold"
+                class={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-sm font-semibold ${subCheckGlyphClasses[statusToTone(check.status)]}`}
                 aria-hidden="true"
               >
                 {statusGlyph(check.status)}

@@ -1,0 +1,126 @@
+# Compose v2: no `version:` field (deprecated). Services join a single
+# user-defined network so service names resolve as DNS hostnames
+# (`postgres`, `redis`, `api`, `worker`, `frontend`).
+#
+# This base file is production-shaped: only Nginx (frontend service) is
+# published to the host on :80. The API is NOT published — Nginx reverse-
+# proxies /api/* to it on the internal network. Uvicorn runs WITHOUT
+# `--reload`, no source bind mounts, no restart policies, no log caps —
+# every dev/prod-specific knob lives in an override file:
+#
+#   docker compose up -d --build
+#     → base only (production-shaped, safe to deploy as-is)
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#     → base + dev override (uvicorn --reload, source mounts, :8000 republished)
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#     → base + prod override (restart policies, log caps, required secrets, no defaults)
+
+x-backend-env: &backend-env
+  # Internal service names — these are the only hardcoded URLs; both point
+  # at sibling containers on `audithealth-net`. Overriding from host .env
+  # would break the wiring.
+  DATABASE_URL: postgresql+psycopg://audithealth:audithealth@postgres:5432/audithealth
+  REDIS_URL: redis://redis:6379/0
+  APP_ENV: ${APP_ENV:-development}
+  # Magic-link emails / stdout-printed links target Nginx on :80. The dev
+  # override file flips this back to :5173 for the host Vite workflow.
+  FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  FROM_EMAIL: ${FROM_EMAIL:-Local SEO Health Monitor <onboarding@resend.dev>}
+  MAGIC_LINK_TTL_MINUTES: ${MAGIC_LINK_TTL_MINUTES:-15}
+  SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+  SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-session}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  AUDIT_MAX_CONCURRENT_DRIVERS: ${AUDIT_MAX_CONCURRENT_DRIVERS:-1}
+  AUDIT_PAGE_TIMEOUT: ${AUDIT_PAGE_TIMEOUT:-30}
+  AUDIT_SCRIPT_TIMEOUT: ${AUDIT_SCRIPT_TIMEOUT:-20}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: audithealth
+      POSTGRES_PASSWORD: audithealth
+      POSTGRES_DB: audithealth
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audithealth -d audithealth"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - audithealth-net
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - audithealth-net
+
+  api:
+    build:
+      context: ./backend
+    image: audithealth-backend:dev
+    # Base command runs migrations then uvicorn WITHOUT --reload. The dev
+    # override re-adds --reload (paired with a source bind mount). Migrations
+    # run on every API container restart; see project_notes.md "Migration
+    # handling on prod restart" for the single-replica constraint that
+    # depends on.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment: *backend-env
+    # No `ports:` — Nginx (frontend) is the host entry point. The dev
+    # override re-publishes 8000:8000 for direct curl / npm-run-dev access.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Chromium uses /dev/shm for IPC buffers and crashes on Docker's default
+    # 64MB. 1GB is the actual fix for the --disable-dev-shm-usage workaround
+    # baked into scrapers/driver.py.
+    shm_size: "1gb"
+    networks:
+      - audithealth-net
+
+  worker:
+    # Re-uses the image built by the `api` service — single build, two
+    # processes. Do NOT add a second `build:` here; compose v2 idiom is one
+    # tagged image, multiple services.
+    image: audithealth-backend:dev
+    command: ["python", "-m", "scripts.run_worker"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Worker is where Chromium actually runs — this is the load-bearing copy.
+    shm_size: "1gb"
+    networks:
+      - audithealth-net
+
+  frontend:
+    build:
+      context: ./frontend
+    image: audithealth-frontend:dev
+    ports:
+      - "80:80"
+    depends_on:
+      # No `service_healthy` — Nginx happily starts before the API and just
+      # 502s on /api/* until the API is up. Acceptable for dev.
+      - api
+    networks:
+      - audithealth-net
+
+volumes:
+  postgres_data:
+
+networks:
+  audithealth-net:

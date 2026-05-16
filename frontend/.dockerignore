@@ -1,0 +1,20 @@
+# Load-bearing: copying host-built node_modules into a Linux container
+# silently breaks native deps (esbuild, etc).
+node_modules/
+.svelte-kit/
+build/
+dist/
+.vite/
+
+# Host machine clutter.
+.git/
+.idea/
+.vscode/
+.DS_Store
+
+# Env / secrets never get baked into the image — compose passes them at runtime.
+.env
+.env.*
+
+# Test / coverage artefacts.
+coverage/

@@ -29,7 +29,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from scrapers.driver import chrome_driver, detect_captcha
-from scrapers.types import BusinessInput, RecommendationDraft, SectionResult
+from scrapers.types import BusinessInput, ProgressCb, RecommendationDraft, SectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,35 @@ PANEL_WAIT_S = 12
 RATING_PATTERN = re.compile(r"\b([1-5](?:\.\d)?)\s*(?:stars?)?\s*\(([\d,]+)\)")
 
 
-async def audit_maps(business: BusinessInput) -> SectionResult:
-    """Run the Maps audit for a business in a worker thread."""
-    return await asyncio.to_thread(_audit_maps_sync, business)
+async def audit_maps(
+    business: BusinessInput, *, progress: ProgressCb = None
+) -> SectionResult:
+    """Run the Maps audit for a business in a worker thread.
+
+    ``progress`` (optional) is a callback the runner injects so the
+    scraper can narrate sub-phases (looking_up → found_listing →
+    read_reviews) to the live-analysis stream. Old call sites that
+    don't supply it just get the old silent behavior.
+    """
+    return await asyncio.to_thread(_audit_maps_sync, business, progress)
 
 
-def _audit_maps_sync(business: BusinessInput) -> SectionResult:
+def _emit(progress: ProgressCb, step: str, detail: dict | None = None) -> None:
+    if progress is None:
+        return
+    try:
+        progress(step, detail)
+    except Exception:
+        # Narration is best-effort — never let it tank a real audit.
+        logger.debug("maps progress callback failed for step=%s", step, exc_info=True)
+
+
+def _audit_maps_sync(
+    business: BusinessInput, progress: ProgressCb = None
+) -> SectionResult:
     target_url = business.maps_url or _build_search_url(business.name, business.city)
+
+    _emit(progress, "looking_up", {"target": "Google Maps"})
 
     with chrome_driver() as driver:
         try:
@@ -61,10 +83,12 @@ def _audit_maps_sync(business: BusinessInput) -> SectionResult:
             pass  # let the parser try anyway; it'll mark a partial result
 
         detect_captcha(driver)
+        _emit(progress, "reading_listing")
         raw = _extract_panel(driver)
 
     if not raw.get("found"):
         raw["url"] = target_url
+        _emit(progress, "listing_not_found")
         return SectionResult(
             score=0,
             status="failed",
@@ -73,6 +97,16 @@ def _audit_maps_sync(business: BusinessInput) -> SectionResult:
         )
 
     raw["url"] = driver_current_url_safe(target_url, raw)
+    _emit(
+        progress,
+        "found_listing",
+        {
+            "name": raw.get("name"),
+            "rating": raw.get("rating"),
+            "review_count": raw.get("review_count"),
+        },
+    )
+
     score = _score_maps(raw)
     recommendations = _recommendations(raw)
     discovered: dict[str, str | None] = {}

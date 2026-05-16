@@ -31,3 +31,11 @@ class BusinessResponse(BaseModel):
     website: str | None
     ig_handle: str | None
     added_at: datetime
+    # Latest-audit summary so the dashboard listing can render a grade chip,
+    # trend arrow and an "audit in progress" badge in a single round-trip.
+    latest_score: int | None = None
+    latest_grade: str | None = None
+    latest_trend: str | None = None  # 'up' | 'down' | 'flat' | None
+    latest_audit_id: int | None = None
+    latest_audit_finished_at: datetime | None = None
+    running_audit_id: int | None = None

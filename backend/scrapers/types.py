@@ -1,5 +1,13 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+
+# Optional progress callback a scraper can call to narrate sub-phase events
+# (e.g. "found_listing", "read_reviews") to the live-analysis stream. The
+# runner injects an implementation; passing None turns intermediate events
+# into a no-op so scrapers can still be called standalone (tests, debug).
+ProgressCb = Callable[[str, dict[str, Any] | None], None] | None
 
 
 @dataclass

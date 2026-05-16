@@ -117,6 +117,36 @@ def logout(
     return response
 
 
+class SessionResponse(BaseModel):
+    """Always 200 — ``user`` is null when not signed in.
+
+    Lets the SPA's "am I logged in?" probe run without browsers logging a
+    red 401 to the console on every page load. The signed-in check itself
+    is enforced by ``current_user`` on protected endpoints, not by 401-ing
+    this one.
+    """
+
+    user: MeResponse | None = None
+
+
 @router.get("/auth/me", response_model=MeResponse)
 def me(user: User = Depends(current_user)) -> MeResponse:
     return MeResponse(id=user.id, email=user.email, plan=user.plan.value)
+
+
+@router.get("/auth/session", response_model=SessionResponse)
+def session_probe(
+    db: DbSession = Depends(get_db),
+    session: str | None = Cookie(default=None, alias=settings.session_cookie_name),
+) -> SessionResponse:
+    if not session:
+        return SessionResponse(user=None)
+    db_session = auth_service.get_session_by_token(db, session)
+    if db_session is None:
+        return SessionResponse(user=None)
+    user = db.get(User, db_session.user_id)
+    if user is None:
+        return SessionResponse(user=None)
+    return SessionResponse(
+        user=MeResponse(id=user.id, email=user.email, plan=user.plan.value)
+    )

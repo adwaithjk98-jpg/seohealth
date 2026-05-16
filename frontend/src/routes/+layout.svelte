@@ -12,6 +12,7 @@
   } from '$lib/auth.svelte.js';
 
   let { children } = $props();
+  let mobileMenuOpen = $state(false);
 
   onMount(async () => {
     if (!authState.loaded) {
@@ -24,6 +25,9 @@
   $effect(() => {
     if (!authState.loaded) return;
     enforceGate($page.url.pathname);
+    // Auto-close the mobile account menu whenever the route changes, so
+    // tapping a nav link doesn't leave a stale popover open over the new page.
+    mobileMenuOpen = false;
   });
 
   /** @param {string} pathname */
@@ -37,6 +41,7 @@
   }
 
   async function handleLogout() {
+    mobileMenuOpen = false;
     await logout();
   }
 </script>
@@ -70,7 +75,54 @@
         {#if authState.user}
           <a class="btn-ghost" href="/dashboard">Dashboard</a>
           <span class="hidden text-xs text-canvas-muted sm:inline">{authState.user.email}</span>
-          <button type="button" class="btn-ghost" onclick={handleLogout}>Sign out</button>
+          <button
+            type="button"
+            class="btn-ghost hidden sm:inline-flex"
+            onclick={handleLogout}
+          >
+            Sign out
+          </button>
+
+          <!-- m7 — mobile-only popover so the signed-in email + sign-out
+               are still reachable below 768px (previously the email just
+               disappeared from the header with no replacement). -->
+          <div class="relative sm:hidden">
+            <button
+              type="button"
+              class="btn-ghost grid h-9 w-9 place-items-center"
+              aria-haspopup="menu"
+              aria-expanded={mobileMenuOpen}
+              aria-label="Account menu"
+              onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
+            >
+              <span
+                class="grid h-7 w-7 place-items-center rounded-full bg-healthy-500 text-xs font-semibold uppercase text-white"
+                aria-hidden="true"
+              >
+                {authState.user.email[0]}
+              </span>
+            </button>
+            {#if mobileMenuOpen}
+              <div
+                class="absolute right-0 top-12 z-40 w-60 rounded-2xl border border-canvas-soft bg-white p-3 shadow-soft"
+                role="menu"
+              >
+                <p class="px-2 text-xs uppercase tracking-wide text-canvas-muted">
+                  Signed in as
+                </p>
+                <p class="mt-0.5 truncate px-2 text-sm font-medium text-canvas-ink">
+                  {authState.user.email}
+                </p>
+                <button
+                  type="button"
+                  class="btn-ghost mt-2 w-full justify-start"
+                  onclick={handleLogout}
+                >
+                  Sign out
+                </button>
+              </div>
+            {/if}
+          </div>
         {:else if authState.loaded}
           <a class="btn-ghost" href="/login">Sign in</a>
         {/if}

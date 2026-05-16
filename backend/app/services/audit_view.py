@@ -151,6 +151,7 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         "trigger": audit.trigger.value,
         "started_at": audit.started_at,
         "finished_at": audit.finished_at,
+        "error_message": audit.error_message,
         "overall_score": overall_score,
         "overall_grade": grade_from_score(overall_score),
         "previous_overall_score": prev_overall,

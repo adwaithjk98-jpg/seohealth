@@ -1,0 +1,13 @@
+# Repo-root .gitignore. Per-subtree ignores (backend/, frontend/) still
+# live in those subdirectories' own .gitignore files; this one covers what
+# the compose stack adds at the root.
+
+# Host-level env for `docker compose` (the file .env.example documents).
+# Mirrors backend/.gitignore and frontend/.gitignore — every level that can
+# have an .env must ignore it. A leaked POSTGRES_PASSWORD or RESEND_API_KEY
+# is the kind of thing that's expensive to find out about late.
+.env
+.env.*
+!.env.example
+
+.DS_Store

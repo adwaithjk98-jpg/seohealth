@@ -1,0 +1,54 @@
+# Dev override. Layers on top of docker-compose.yml — invoke explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Effect vs. the base file:
+#   - API runs uvicorn with `--reload` against a source bind mount, so editing
+#     Python files on the host triggers an in-container reload without a
+#     rebuild. Worker has the same source mounts (no `--reload`; RQ workers
+#     re-import each job).
+#   - API re-publishes 8000:8000 to the host, so the legacy four-process dev
+#     flow (host `npm run dev` on :5173 + Vite proxy → 127.0.0.1:8000) keeps
+#     working alongside the Nginx-fronted compose stack.
+#   - `FRONTEND_BASE_URL` flips back to http://localhost:5173 so magic-link
+#     emails / stdout-printed links target the host Vite server.
+#
+# Source-mount strategy: mount the three source dirs we actually edit
+# (`app/`, `scrapers/`, `scripts/`, `alembic/`) rather than the whole
+# `./backend`. This sidesteps two headaches:
+#   - The host's `backend/.venv` (if a developer has one) would otherwise
+#     bypass `.dockerignore` and clobber the container's Linux Python deps
+#     with macOS-built wheels. Mounting subdirs only means `.venv` and
+#     `__pycache__` from the host never enter the container.
+#   - The image's `/app` is `chown app:app`; mounting only source dirs
+#     preserves that ownership at the writable seams (e.g., `alembic/`
+#     versions) while leaving the dep tree under image-owned paths.
+# Skipped the legacy `:cached` mount flag — no-op on OrbStack VirtioFS and
+# on Linux; only ever did anything on Docker Desktop / macOS.
+
+services:
+  api:
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      # Magic-link target — host Vite server on :5173 in dev. Overrides the
+      # base file's :80 default.
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:5173}
+    ports:
+      # Re-publish so host `npm run dev` proxy at 127.0.0.1:8000 still works.
+      # The base file deliberately omits this — production must not expose
+      # the API directly to the host.
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/scrapers:/app/scrapers
+      - ./backend/scripts:/app/scripts
+      - ./backend/alembic:/app/alembic
+
+  worker:
+    # Same source mounts so worker code reloads on next job (no `--reload`
+    # equivalent for RQ — each job re-imports the entrypoint anyway).
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/scrapers:/app/scrapers
+      - ./backend/scripts:/app/scripts
+      - ./backend/alembic:/app/alembic

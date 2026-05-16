@@ -54,6 +54,29 @@ def create_audit(
     if business is None or not _user_owns_business(business, user):
         raise HTTPException(status_code=404, detail="business not found")
 
+    # Guard against stacking audits on a business that already has one
+    # in-flight (pending or running). The on_failure callback in
+    # workers/queue.py guarantees nothing stays in those states forever,
+    # so this can't lock a user out of re-auditing after a crash.
+    in_flight = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == payload.business_id,
+            Audit.status.in_([AuditStatus.pending, AuditStatus.running]),
+        )
+        .order_by(desc(Audit.id))
+        .first()
+    )
+    if in_flight is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "audit_in_flight",
+                "message": "An audit is already running for this business.",
+                "running_audit_id": in_flight.id,
+            },
+        )
+
     audit = Audit(
         business_id=payload.business_id,
         status=AuditStatus.pending,

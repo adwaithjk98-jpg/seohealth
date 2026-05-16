@@ -1,0 +1,79 @@
+# Prod override. Layers on top of docker-compose.yml — invoke explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Effect vs. the base file:
+#   - Every service gets `restart: unless-stopped` so a crashed container
+#     comes back automatically. `unless-stopped` (not `always`) lets a
+#     deliberate `docker compose stop` actually stop a service for a deploy
+#     without a fight.
+#   - Required secrets are read from the host environment with NO compose
+#     default. Compose substitutes `${VAR:?msg}` and fails loudly with `msg`
+#     if VAR is unset or empty — that's the desired behavior in prod (a
+#     missing POSTGRES_PASSWORD must not silently fall back to "audithealth").
+#     RESEND_API_KEY uses `${VAR?msg}` (no colon) so set-but-empty is
+#     accepted — production should set a real key, but the dev stdout
+#     fallback inside the app is what makes a localhost smoke test of the
+#     prod shape possible.
+#   - `SESSION_COOKIE_SECURE=true` on the API. Required once HTTPS sits in
+#     front of the stack — without it, browsers refuse the cookie on https
+#     responses. For a localhost smoke test (no HTTPS) set
+#     SESSION_COOKIE_SECURE=false in the host .env to override this back.
+#   - JSON-file log driver capped at 10MB × 3 files per service (30MB total)
+#     so a busy worker can't balloon the host disk over weeks. Dev override
+#     intentionally does NOT do this — `docker compose logs -f` truncating
+#     mid-debugging is annoying.
+#
+# Not in this override (intentionally):
+#   - `read_only: true` on the API / worker — Chromium writes to /tmp and
+#     /dev/shm; a read-only rootfs without matching tmpfs mounts breaks
+#     audits in a way that's painful to diagnose.
+#   - Host port publishes for 5432 / 6379 — Postgres and Redis must stay
+#     on the internal compose network only.
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    restart: unless-stopped
+    environment:
+      # POSTGRES_USER and POSTGRES_DB stay at the base values; only the
+      # password is parameterized. `${VAR:?msg}` makes compose fail to start
+      # if POSTGRES_PASSWORD is unset OR empty.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for prod}
+    logging: *default-logging
+
+  redis:
+    restart: unless-stopped
+    logging: *default-logging
+
+  api:
+    restart: unless-stopped
+    # Override the base anchor's hard-coded `audithealth` password with the
+    # one supplied via host env. POSTGRES_USER/DB are still `audithealth`
+    # in the postgres service, so the URL shape only changes in the
+    # password slot.
+    environment:
+      DATABASE_URL: postgresql+psycopg://audithealth:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for prod}@postgres:5432/audithealth
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL must be set for prod}
+      RESEND_API_KEY: ${RESEND_API_KEY?RESEND_API_KEY must be defined in host env (empty allowed for localhost smoke test)}
+      FROM_EMAIL: ${FROM_EMAIL:?FROM_EMAIL must be set for prod}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+    logging: *default-logging
+
+  worker:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://audithealth:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for prod}@postgres:5432/audithealth
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL must be set for prod}
+      RESEND_API_KEY: ${RESEND_API_KEY?RESEND_API_KEY must be defined in host env (empty allowed for localhost smoke test)}
+      FROM_EMAIL: ${FROM_EMAIL:?FROM_EMAIL must be set for prod}
+    logging: *default-logging
+
+  frontend:
+    restart: unless-stopped
+    logging: *default-logging

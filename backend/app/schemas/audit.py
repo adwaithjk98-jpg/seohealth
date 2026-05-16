@@ -65,6 +65,7 @@ class AuditDetailResponse(BaseModel):
     trigger: str
     started_at: datetime
     finished_at: datetime | None
+    error_message: str | None = None
     overall_score: int | None
     overall_grade: str
     previous_overall_score: int | None = None

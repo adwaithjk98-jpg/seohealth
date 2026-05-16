@@ -48,6 +48,37 @@
 
   const isDone = $derived(recommendation?.fix_status === 'done');
 
+  // s7 — touch swipe-down to dismiss on mobile. The close-X in the top
+  // right of a near-full-height modal is a thumb-stretch on a phone, so
+  // the swipe-down off the drag handle matches modern mobile sheet UX.
+  let touchStartY = 0;
+  let touchCurrentY = 0;
+  let dragging = $state(false);
+  let dragOffset = $state(0);
+  const DISMISS_THRESHOLD_PX = 80;
+
+  function onTouchStart(event) {
+    touchStartY = event.touches[0].clientY;
+    touchCurrentY = touchStartY;
+    dragging = true;
+  }
+
+  function onTouchMove(event) {
+    if (!dragging) return;
+    touchCurrentY = event.touches[0].clientY;
+    // Only allow downward drag — pulling up shouldn't do anything.
+    dragOffset = Math.max(0, touchCurrentY - touchStartY);
+  }
+
+  function onTouchEnd() {
+    if (!dragging) return;
+    dragging = false;
+    if (dragOffset > DISMISS_THRESHOLD_PX) {
+      onClose();
+    }
+    dragOffset = 0;
+  }
+
   async function toggleDone() {
     if (!recommendation) return;
     saving = true;
@@ -87,6 +118,9 @@
 >
   <div
     class="relative w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-soft"
+    style={dragging
+      ? `transform: translateY(${dragOffset}px); transition: none;`
+      : 'transform: translateY(0); transition: transform 200ms ease-out;'}
     in:fly={{ y: 16, duration: 320, easing: quintOut }}
     out:fly={{ y: 12, duration: 200 }}
     onclick={(e) => e.stopPropagation()}
@@ -94,10 +128,24 @@
     aria-modal="true"
     aria-label={recommendation?.title ?? 'Recommendation'}
   >
+    <!-- s7 — drag handle (mobile only) for swipe-to-dismiss. The touch
+         listeners on the wrapper measure the drag and onClose() fires
+         once the user pulls past DISMISS_THRESHOLD_PX. -->
+    <div
+      class="absolute inset-x-0 top-0 z-10 flex h-6 cursor-grab touch-none items-center justify-center sm:hidden"
+      ontouchstart={onTouchStart}
+      ontouchmove={onTouchMove}
+      ontouchend={onTouchEnd}
+      ontouchcancel={onTouchEnd}
+      role="presentation"
+    >
+      <span class="h-1 w-10 rounded-full bg-canvas-soft" aria-hidden="true"></span>
+    </div>
+
     <button
       type="button"
       onclick={onClose}
-      class="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full bg-canvas-soft text-canvas-muted transition hover:bg-canvas-soft/80 hover:text-canvas-ink"
+      class="absolute right-4 top-4 z-10 grid h-9 w-9 place-items-center rounded-full bg-canvas-soft text-canvas-muted transition hover:bg-canvas-soft/80 hover:text-canvas-ink"
       aria-label="Close"
     >
       ✕
