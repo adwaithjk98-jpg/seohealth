@@ -34,6 +34,14 @@ x-backend-env: &backend-env
   AUDIT_MAX_CONCURRENT_DRIVERS: ${AUDIT_MAX_CONCURRENT_DRIVERS:-1}
   AUDIT_PAGE_TIMEOUT: ${AUDIT_PAGE_TIMEOUT:-30}
   AUDIT_SCRIPT_TIMEOUT: ${AUDIT_SCRIPT_TIMEOUT:-20}
+  # Razorpay (Test Mode for Phase 3). Empty key id ⇒ in-app mock checkout
+  # — the no-cost path used by the prompt-block builds. See backend/.env.example
+  # for the full var list and what each one gates.
+  RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+  RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+  RAZORPAY_PAID_PLAN_ID: ${RAZORPAY_PAID_PLAN_ID:-}
+  RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+  PAID_PLAN_PRICE_LABEL: ${PAID_PLAN_PRICE_LABEL:-₹399 / month}
 
 services:
   postgres:

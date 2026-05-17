@@ -7,8 +7,10 @@ from app.db import get_db
 from app.models import Audit, Business, User
 from app.models.enums import AuditStatus
 from app.schemas.business import BusinessCreateRequest, BusinessResponse
+from app.services import subscriptions as subs_service
 from app.services.audit_summary import grade_from_score
 from app.services.audit_view import TREND_THRESHOLD
+from app.services.auto_audit import next_auto_audit_at
 
 router = APIRouter()
 
@@ -63,7 +65,7 @@ def _running_audit_id(db: Session, business_id: int) -> int | None:
     return audit.id if audit else None
 
 
-def _to_response(db: Session, b: Business) -> BusinessResponse:
+def _to_response(db: Session, b: Business, user: User) -> BusinessResponse:
     completed = _latest_two_completed(db, b.id)
     latest = completed[0] if completed else None
     prev = completed[1] if len(completed) > 1 else None
@@ -84,6 +86,7 @@ def _to_response(db: Session, b: Business) -> BusinessResponse:
         latest_audit_id=latest.id if latest else None,
         latest_audit_finished_at=latest.finished_at if latest else None,
         running_audit_id=_running_audit_id(db, b.id),
+        next_auto_audit_at=next_auto_audit_at(db, b, user),
     )
 
 
@@ -135,6 +138,24 @@ def create_business(
             },
         )
 
+    # Free: 1 business. Paid: 3. Enforced here (not just in the UI) so a curl
+    # or stale tab can't bypass the cap. AuditAppPlan §8 — "Pricing model".
+    business_limit = subs_service.user_business_limit(user)
+    current_count = subs_service.count_active_businesses(db, user.id)
+    if current_count >= business_limit:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "business_limit_reached",
+                "message": (
+                    "You've reached the limit for your plan. Upgrade to add more businesses."
+                ),
+                "tier": user.plan.value,
+                "limit": business_limit,
+                "business_count": current_count,
+            },
+        )
+
     business = Business(
         user_id=user.id,
         name=name,
@@ -148,7 +169,7 @@ def create_business(
     db.commit()
     db.refresh(business)
 
-    return _to_response(db, business)
+    return _to_response(db, business, user)
 
 
 @router.get("/businesses", response_model=list[BusinessResponse])
@@ -162,4 +183,4 @@ def list_businesses(
         .order_by(desc(Business.added_at))
         .all()
     )
-    return [_to_response(db, b) for b in rows]
+    return [_to_response(db, b, user) for b in rows]

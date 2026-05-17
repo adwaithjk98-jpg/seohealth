@@ -215,7 +215,7 @@
         Live analysis
       {/if}
     </p>
-    <h1 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+    <h1 class="mt-3 text-2xl font-semibold tracking-tight sm:text-4xl">
       {#if business}
         Quietly checking on
         <span class="text-healthy-600">{business.name}</span>
@@ -338,18 +338,30 @@
       {#if retryError}
         <p class="mt-3 rounded-xl bg-white/60 px-3 py-2 text-xs">{retryError}</p>
       {/if}
-      <div class="mt-4 flex flex-wrap gap-2">
+      <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         {#if business?.id}
           <button
             type="button"
-            class="btn-primary"
+            class="btn-primary w-full sm:w-auto"
             disabled={retrying}
             onclick={handleRetry}
           >
-            {#if retrying}Starting…{:else}↻ Try again{/if}
+            {#if retrying}
+              <span class="inline-flex items-center justify-center gap-2">
+                <span
+                  class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                  aria-hidden="true"
+                ></span>
+                Starting…
+              </span>
+            {:else}
+              ↻ Try again
+            {/if}
           </button>
         {/if}
-        <a class="btn-ghost text-action-700" href="/dashboard">Back to your dashboard</a>
+        <a class="btn-ghost w-full text-action-700 sm:w-auto" href="/dashboard">
+          Back to your dashboard
+        </a>
       </div>
     </div>
   {:else if isComplete}
@@ -369,8 +381,23 @@
       </button>
     </div>
   {:else if phases.length === 0}
-    <p class="mt-10 text-center text-sm text-canvas-muted">
-      Connecting to your audit stream…
-    </p>
+    <div class="mt-10 space-y-3" aria-busy="true" aria-live="polite">
+      <span class="sr-only">Connecting to your audit stream…</span>
+      {#each Array(4) as _, i}
+        <div class="card flex items-center gap-4 p-5">
+          <div
+            class="skeleton h-10 w-10 shrink-0 rounded-xl"
+            aria-hidden="true"
+          ></div>
+          <div class="flex-1 space-y-2">
+            <div class="skeleton h-4 w-3/4 rounded-lg" aria-hidden="true"></div>
+            <div class="skeleton h-3 w-1/2 rounded-lg" aria-hidden="true"></div>
+          </div>
+        </div>
+      {/each}
+      <p class="pt-2 text-center text-xs text-canvas-muted">
+        Connecting to your audit stream… first results in just a moment.
+      </p>
+    </div>
   {/if}
 </section>

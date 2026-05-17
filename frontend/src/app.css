@@ -27,15 +27,15 @@
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-healthy-500 px-5 py-3 text-sm font-medium text-white shadow-soft transition hover:bg-healthy-600 focus:outline-none focus:ring-2 focus:ring-healthy-300 focus:ring-offset-2 focus:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex min-h-[44px] items-center justify-center rounded-xl bg-healthy-500 px-5 py-3 text-sm font-medium text-white shadow-soft transition-all duration-200 hover:bg-healthy-600 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-healthy-300 focus:ring-offset-2 focus:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-soft disabled:active:scale-100;
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-medium text-canvas-muted transition hover:bg-canvas-soft hover:text-canvas-ink;
+    @apply inline-flex min-h-[40px] items-center justify-center rounded-xl px-4 py-2 text-sm font-medium text-canvas-muted transition-colors duration-200 hover:bg-canvas-soft hover:text-canvas-ink focus:outline-none focus:ring-2 focus:ring-healthy-200;
   }
 
   .field {
-    @apply w-full rounded-xl border border-canvas-soft bg-white px-4 py-3 text-sm text-canvas-ink placeholder:text-canvas-muted/70 shadow-sm transition focus:border-healthy-400 focus:outline-none focus:ring-2 focus:ring-healthy-200;
+    @apply w-full rounded-xl border border-canvas-soft bg-white px-4 py-3 text-base text-canvas-ink placeholder:text-canvas-muted/70 shadow-sm transition-all duration-200 focus:border-healthy-400 focus:outline-none focus:ring-2 focus:ring-healthy-200 sm:text-sm;
   }
 
   .label {
@@ -44,5 +44,80 @@
 
   .card {
     @apply rounded-2xl border border-canvas-soft bg-white shadow-soft;
+  }
+
+  /* Skeleton loader — soft shimmer in our canvas-soft palette */
+  .skeleton {
+    @apply relative overflow-hidden rounded-xl bg-canvas-soft;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.55) 50%,
+      transparent 100%
+    );
+    transform: translateX(-100%);
+    animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton::after {
+      animation: none;
+    }
+  }
+}
+
+@layer utilities {
+  /* Used by the FindingModal's "Mark as done" success burst. */
+  @keyframes done-pop {
+    0% {
+      transform: scale(0.4);
+      opacity: 0;
+    }
+    55% {
+      transform: scale(1.15);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  .animate-done-pop {
+    animation: done-pop 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes confetti-burst {
+    0% {
+      transform: translate(0, 0) scale(0.6) rotate(0deg);
+      opacity: 0;
+    }
+    20% {
+      opacity: 1;
+    }
+    100% {
+      transform: translate(var(--cx, 0), var(--cy, 0)) scale(0.9) rotate(var(--rot, 180deg));
+      opacity: 0;
+    }
+  }
+  .animate-confetti {
+    animation: confetti-burst 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-done-pop,
+    .animate-confetti {
+      animation: none;
+    }
   }
 }

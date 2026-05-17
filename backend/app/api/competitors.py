@@ -1,0 +1,356 @@
+"""Competitor CRUD routes (Phase 4 — paid-tier feature).
+
+Three endpoints, all scoped to a business the caller owns:
+  - ``POST   /api/businesses/{id}/competitors``     add by Maps URL
+  - ``GET    /api/businesses/{id}/competitors``     list active competitors
+  - ``DELETE /api/businesses/{id}/competitors/{cid}`` archive (soft delete)
+
+Tier rules: free users get ``402 Payment Required`` on POST; paid users
+cap at ``TIER_LIMITS[paid]["competitors"]`` (3 today). The cap is enforced
+here, not just in the UI, so a curl or stale tab can't bypass it.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import desc, func
+from sqlalchemy.orm import Session
+
+from app.auth_deps import current_user
+from app.db import get_db
+from app.models import Audit, AuditSection, Business, Competitor, CompetitorObservation, User
+from app.models.enums import AuditSectionName, AuditStatus
+from app.schemas.competitor import (
+    BusinessTrendsResponse,
+    CompetitorCreateRequest,
+    CompetitorResponse,
+    CompetitorTrend,
+    TrendPoint,
+)
+from app.services import subscriptions as subs_service
+
+router = APIRouter()
+
+
+def _own_business_or_404(db: Session, user: User, business_id: int) -> Business:
+    business = (
+        db.query(Business)
+        .filter(
+            Business.id == business_id,
+            Business.user_id == user.id,
+            Business.archived_at.is_(None),
+        )
+        .one_or_none()
+    )
+    if business is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="business not found",
+        )
+    return business
+
+
+def _latest_observation_map(
+    db: Session, competitor_ids: list[int]
+) -> dict[int, CompetitorObservation]:
+    """Map competitor_id → most recent observation row, in one query.
+
+    Avoids the N+1 we'd get from looping ``order_by ... limit 1`` per
+    competitor on the listing endpoint.
+    """
+    if not competitor_ids:
+        return {}
+    rows: list[CompetitorObservation] = (
+        db.query(CompetitorObservation)
+        .filter(CompetitorObservation.competitor_id.in_(competitor_ids))
+        .order_by(desc(CompetitorObservation.observed_at), desc(CompetitorObservation.id))
+        .all()
+    )
+    latest: dict[int, CompetitorObservation] = {}
+    for row in rows:
+        latest.setdefault(row.competitor_id, row)
+    return latest
+
+
+def _observation_counts(db: Session, competitor_ids: list[int]) -> dict[int, int]:
+    if not competitor_ids:
+        return {}
+    rows = (
+        db.query(
+            CompetitorObservation.competitor_id,
+            func.count(CompetitorObservation.id),
+        )
+        .filter(CompetitorObservation.competitor_id.in_(competitor_ids))
+        .group_by(CompetitorObservation.competitor_id)
+        .all()
+    )
+    return {cid: count for cid, count in rows}
+
+
+def _to_response(
+    competitor: Competitor,
+    latest: CompetitorObservation | None,
+    observation_count: int,
+) -> CompetitorResponse:
+    return CompetitorResponse(
+        id=competitor.id,
+        business_id=competitor.business_id,
+        name=competitor.name,
+        maps_url=competitor.maps_url,
+        added_at=competitor.added_at,
+        latest_rating=latest.rating if latest else None,
+        latest_review_count=latest.review_count if latest else None,
+        latest_observed_at=latest.observed_at if latest else None,
+        observation_count=observation_count,
+    )
+
+
+@router.get(
+    "/businesses/{business_id}/competitors",
+    response_model=list[CompetitorResponse],
+)
+def list_competitors(
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[CompetitorResponse]:
+    _own_business_or_404(db, user, business_id)
+    competitors = (
+        db.query(Competitor)
+        .filter(
+            Competitor.business_id == business_id,
+            Competitor.archived_at.is_(None),
+        )
+        .order_by(Competitor.added_at)
+        .all()
+    )
+    ids = [c.id for c in competitors]
+    latest_map = _latest_observation_map(db, ids)
+    counts = _observation_counts(db, ids)
+    return [
+        _to_response(c, latest_map.get(c.id), counts.get(c.id, 0))
+        for c in competitors
+    ]
+
+
+@router.post(
+    "/businesses/{business_id}/competitors",
+    response_model=CompetitorResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_competitor(
+    business_id: int,
+    payload: CompetitorCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> CompetitorResponse:
+    business = _own_business_or_404(db, user, business_id)
+
+    limit = subs_service.user_competitor_limit(user)
+    if limit <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "competitors_paid_only",
+                "message": "Competitor tracking is a paid-tier feature. Upgrade to add competitors.",
+                "tier": user.plan.value,
+                "limit": limit,
+            },
+        )
+
+    maps_url = payload.maps_url.strip()
+    if not maps_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="maps_url is required",
+        )
+
+    existing_dup = (
+        db.query(Competitor)
+        .filter(
+            Competitor.business_id == business.id,
+            Competitor.archived_at.is_(None),
+            Competitor.maps_url == maps_url,
+        )
+        .first()
+    )
+    if existing_dup is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "competitor_exists",
+                "message": "You're already tracking this competitor.",
+                "existing_competitor_id": existing_dup.id,
+            },
+        )
+
+    current_count = (
+        db.query(Competitor)
+        .filter(
+            Competitor.business_id == business.id,
+            Competitor.archived_at.is_(None),
+        )
+        .count()
+    )
+    if current_count >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "competitor_limit_reached",
+                "message": f"Your plan allows up to {limit} competitors per business.",
+                "tier": user.plan.value,
+                "limit": limit,
+                "competitor_count": current_count,
+            },
+        )
+
+    name = (payload.name or "").strip() or "Competitor"
+    competitor = Competitor(
+        business_id=business.id,
+        name=name,
+        maps_url=maps_url,
+    )
+    db.add(competitor)
+    db.commit()
+    db.refresh(competitor)
+    return _to_response(competitor, latest=None, observation_count=0)
+
+
+@router.get(
+    "/businesses/{business_id}/trends",
+    response_model=BusinessTrendsResponse,
+)
+def get_business_trends(
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> BusinessTrendsResponse:
+    """Time-series rating + review_count for the chart on the business page.
+
+    Returns two parallel histories so the frontend can overlay them on a
+    single chart: the user's own business (pulled from each completed
+    audit's Maps section ``raw_data_json``) and one series per active
+    competitor (pulled from ``competitor_observations``).
+    """
+    _own_business_or_404(db, user, business_id)
+
+    audits: list[Audit] = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == business_id,
+            Audit.status == AuditStatus.done,
+        )
+        .order_by(Audit.finished_at, Audit.id)
+        .all()
+    )
+    audit_ids = [a.id for a in audits]
+
+    maps_sections: dict[int, AuditSection] = {}
+    if audit_ids:
+        rows: list[AuditSection] = (
+            db.query(AuditSection)
+            .filter(
+                AuditSection.audit_id.in_(audit_ids),
+                AuditSection.section == AuditSectionName.maps,
+            )
+            .all()
+        )
+        for row in rows:
+            maps_sections[row.audit_id] = row
+
+    business_points: list[TrendPoint] = []
+    for audit in audits:
+        maps = maps_sections.get(audit.id)
+        raw = (maps.raw_data_json or {}) if maps else {}
+        rating = raw.get("rating") if isinstance(raw, dict) else None
+        review_count = raw.get("review_count") if isinstance(raw, dict) else None
+        if rating is None and review_count is None:
+            # Skip audits that couldn't read Maps at all — plotting (null, null)
+            # would just be a phantom point with no signal.
+            continue
+        business_points.append(
+            TrendPoint(
+                audit_id=audit.id,
+                observed_at=audit.finished_at or audit.started_at,
+                rating=float(rating) if rating is not None else None,
+                review_count=int(review_count) if review_count is not None else None,
+            )
+        )
+
+    competitors: list[Competitor] = (
+        db.query(Competitor)
+        .filter(
+            Competitor.business_id == business_id,
+            Competitor.archived_at.is_(None),
+        )
+        .order_by(Competitor.added_at, Competitor.id)
+        .all()
+    )
+
+    competitor_trends: list[CompetitorTrend] = []
+    if competitors:
+        comp_ids = [c.id for c in competitors]
+        obs_rows: list[CompetitorObservation] = (
+            db.query(CompetitorObservation)
+            .filter(CompetitorObservation.competitor_id.in_(comp_ids))
+            .order_by(CompetitorObservation.observed_at, CompetitorObservation.id)
+            .all()
+        )
+        by_comp: dict[int, list[CompetitorObservation]] = {}
+        for row in obs_rows:
+            by_comp.setdefault(row.competitor_id, []).append(row)
+        for comp in competitors:
+            comp_obs = by_comp.get(comp.id, [])
+            competitor_trends.append(
+                CompetitorTrend(
+                    competitor_id=comp.id,
+                    name=comp.name,
+                    observations=[
+                        TrendPoint(
+                            audit_id=o.audit_id,
+                            observed_at=o.observed_at,
+                            rating=o.rating,
+                            review_count=o.review_count,
+                        )
+                        for o in comp_obs
+                    ],
+                )
+            )
+
+    return BusinessTrendsResponse(
+        business=business_points,
+        competitors=competitor_trends,
+    )
+
+
+@router.delete(
+    "/businesses/{business_id}/competitors/{competitor_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def archive_competitor(
+    business_id: int,
+    competitor_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Response:
+    _own_business_or_404(db, user, business_id)
+    competitor = (
+        db.query(Competitor)
+        .filter(
+            Competitor.id == competitor_id,
+            Competitor.business_id == business_id,
+            Competitor.archived_at.is_(None),
+        )
+        .one_or_none()
+    )
+    if competitor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="competitor not found",
+        )
+    competitor.archived_at = datetime.now(timezone.utc)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -4,12 +4,19 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session as DbSession
 
+from app.schemas.subscription import (
+    SubscriptionInfo,
+    SubscriptionState,
+    TierLimits,
+)
+
 from app.auth_deps import current_user
 from app.config import settings
 from app.db import get_db
 from app.models import User
 from app.services import auth as auth_service
 from app.services import email_service
+from app.services import subscriptions as subs_service
 
 router = APIRouter()
 
@@ -38,6 +45,39 @@ class MeResponse(BaseModel):
     id: int
     email: str
     plan: str
+    # Phase 3 — subscription tier + hard caps + most-recent subscription row,
+    # so the SPA can render Billing state and gate "Add business" without a
+    # second round-trip.
+    subscription_state: SubscriptionState | None = None
+
+
+def _build_me_response(db: DbSession, user: User) -> "MeResponse":
+    limits = subs_service.limits_for_tier(user.plan)
+    business_count = subs_service.count_active_businesses(db, user.id)
+    latest = subs_service.latest_subscription(db, user.id)
+    sub_info = None
+    if latest is not None:
+        sub_info = SubscriptionInfo(
+            id=latest.id,
+            plan_tier=latest.plan_tier,
+            status=latest.status.value,
+            razorpay_subscription_id=latest.razorpay_subscription_id,
+            next_billing_date=latest.next_billing_date,
+            cancelled_at=latest.cancelled_at,
+        )
+    state = SubscriptionState(
+        tier=user.plan.value,
+        limits=TierLimits(**limits),
+        business_count=business_count,
+        can_add_business=business_count < limits["businesses"],
+        subscription=sub_info,
+    )
+    return MeResponse(
+        id=user.id,
+        email=user.email,
+        plan=user.plan.value,
+        subscription_state=state,
+    )
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -101,7 +141,7 @@ def verify_magic_link(
         )
     session = auth_service.create_session(db, user)
     _set_session_cookie(response, session.token)
-    return MeResponse(id=user.id, email=user.email, plan=user.plan.value)
+    return _build_me_response(db, user)
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -130,8 +170,11 @@ class SessionResponse(BaseModel):
 
 
 @router.get("/auth/me", response_model=MeResponse)
-def me(user: User = Depends(current_user)) -> MeResponse:
-    return MeResponse(id=user.id, email=user.email, plan=user.plan.value)
+def me(
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> MeResponse:
+    return _build_me_response(db, user)
 
 
 @router.get("/auth/session", response_model=SessionResponse)
@@ -147,6 +190,4 @@ def session_probe(
     user = db.get(User, db_session.user_id)
     if user is None:
         return SessionResponse(user=None)
-    return SessionResponse(
-        user=MeResponse(id=user.id, email=user.email, plan=user.plan.value)
-    )
+    return SessionResponse(user=_build_me_response(db, user))

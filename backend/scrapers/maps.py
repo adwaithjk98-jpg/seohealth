@@ -20,6 +20,7 @@ import asyncio
 import logging
 import re
 import urllib.parse
+from dataclasses import dataclass
 from typing import Any
 
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -529,3 +530,100 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
         )
 
     return recs
+
+
+# --- Competitor metrics (Phase 4) -------------------------------------------
+
+
+@dataclass
+class CompetitorMetrics:
+    """Lightweight metric snapshot for one competitor listing.
+
+    Phase 4 only tracks rating + review_count per audit; the full panel
+    extraction is overkill since competitors don't get the recommendations
+    treatment. ``error`` is populated when the listing failed to load so the
+    caller can persist a row with null metrics (still useful as a "we tried"
+    signal) without aborting the rest of the batch.
+    """
+
+    competitor_id: int
+    name: str | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    error: str | None = None
+
+
+async def fetch_competitor_metrics(
+    competitors: list[tuple[int, str]],
+    *,
+    progress: ProgressCb = None,
+) -> list[CompetitorMetrics]:
+    """Pull rating + review_count for each (competitor_id, maps_url) pair.
+
+    Opens a single Chrome driver and visits the URLs sequentially — that's
+    cheaper than re-acquiring the driver semaphore per competitor on a small
+    VPS, and matches the per-process concurrency cap (one driver at a time).
+    """
+    return await asyncio.to_thread(_fetch_competitor_metrics_sync, competitors, progress)
+
+
+def _fetch_competitor_metrics_sync(
+    competitors: list[tuple[int, str]], progress: ProgressCb = None
+) -> list[CompetitorMetrics]:
+    results: list[CompetitorMetrics] = []
+    if not competitors:
+        return results
+
+    with chrome_driver() as driver:
+        for competitor_id, maps_url in competitors:
+            _emit(progress, "competitor_started", {"competitor_id": competitor_id})
+            metric = _scrape_one_competitor(driver, competitor_id, maps_url)
+            results.append(metric)
+            _emit(
+                progress,
+                "competitor_finished",
+                {
+                    "competitor_id": competitor_id,
+                    "rating": metric.rating,
+                    "review_count": metric.review_count,
+                    "error": metric.error,
+                },
+            )
+    return results
+
+
+def _scrape_one_competitor(
+    driver: WebDriver, competitor_id: int, maps_url: str
+) -> CompetitorMetrics:
+    try:
+        driver.get(maps_url)
+    except TimeoutException as exc:
+        return CompetitorMetrics(competitor_id=competitor_id, error=f"timeout: {exc}")
+    except WebDriverException as exc:
+        return CompetitorMetrics(competitor_id=competitor_id, error=f"load failed: {exc}")
+
+    try:
+        WebDriverWait(driver, PANEL_WAIT_S).until(
+            EC.presence_of_element_located((By.TAG_NAME, "h1"))
+        )
+    except TimeoutException:
+        pass
+
+    try:
+        detect_captcha(driver)
+    except Exception as exc:
+        return CompetitorMetrics(competitor_id=competitor_id, error=f"captcha: {exc}")
+
+    name = _safe_text(driver, By.CSS_SELECTOR, "h1")
+    page_source = ""
+    try:
+        page_source = driver.page_source
+    except WebDriverException:
+        pass
+    rating, review_count = _parse_rating_and_reviews(driver, page_source)
+    return CompetitorMetrics(
+        competitor_id=competitor_id,
+        name=name,
+        rating=rating,
+        review_count=review_count,
+    )

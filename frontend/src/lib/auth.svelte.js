@@ -13,12 +13,56 @@
 
 import { goto } from '$app/navigation';
 
-/** @type {{ user: null | { id: number, email: string, plan: string }, loaded: boolean, loading: boolean }} */
+/**
+ * @typedef {Object} TierLimits
+ * @property {number} businesses
+ * @property {number} audits_per_week
+ * @property {number} [competitors]
+ *
+ * @typedef {Object} SubscriptionInfo
+ * @property {number} id
+ * @property {string} plan_tier
+ * @property {string} status
+ * @property {string | null} razorpay_subscription_id
+ * @property {string | null} next_billing_date
+ * @property {string | null} cancelled_at
+ *
+ * @typedef {Object} SubscriptionState
+ * @property {string} tier
+ * @property {TierLimits} limits
+ * @property {number} business_count
+ * @property {boolean} can_add_business
+ * @property {SubscriptionInfo | null} subscription
+ *
+ * @typedef {Object} CurrentUser
+ * @property {number} id
+ * @property {string} email
+ * @property {string} plan
+ * @property {SubscriptionState | null} subscription_state
+ */
+
+/** @type {{ user: null | CurrentUser, loaded: boolean, loading: boolean }} */
 export const authState = $state({
   user: null,
   loaded: false,
   loading: false
 });
+
+export async function refreshCurrentUser() {
+  // Lighter sibling of loadCurrentUser — re-fetches after a state-changing
+  // action (upgrade, business add) so the header / Add-business gates pick
+  // up the new tier + business_count without a full page reload.
+  try {
+    const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    if (res.ok) {
+      const body = await res.json();
+      authState.user = body?.user ?? null;
+    }
+  } catch {
+    /* leave user untouched on transient failure */
+  }
+  return authState.user;
+}
 
 /** @param {Response} res */
 async function readJsonError(res) {

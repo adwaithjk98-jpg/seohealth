@@ -16,6 +16,8 @@
   } from '$lib/dashboard.js';
   import ScoreGauge from '$lib/components/ScoreGauge.svelte';
   import SectionCard from '$lib/components/SectionCard.svelte';
+  import CompetitorsSection from '$lib/components/CompetitorsSection.svelte';
+  import Skeleton from '$lib/components/Skeleton.svelte';
 
   // /businesses/{id} is the canonical, audit-id-independent dashboard URL
   // (m6/s5). Bookmarks here survive every re-audit — they always resolve
@@ -58,6 +60,13 @@
   const totalDone = $derived(audit?.done_recommendations_count ?? 0);
   const auditId = $derived(audit?.audit_id ?? null);
 
+  // Competitors section (Phase 4) reads the user's plan to switch between
+  // upsell-for-free and the real form for paid. Mirrors the gate used on
+  // /dashboard for the auto-audit banner.
+  const subState = $derived(authState.user?.subscription_state ?? null);
+  const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
+  const competitorLimit = $derived(subState?.limits?.competitors ?? 0);
+
   async function handleReaudit() {
     if (!audit?.business?.id || reauditing) return;
     reauditing = true;
@@ -93,28 +102,69 @@
 </script>
 
 {#if status === 'loading'}
-  <section class="mx-auto mt-10 max-w-2xl text-center">
-    <p class="text-sm text-canvas-muted">Pulling up your latest audit…</p>
+  <section class="space-y-10" aria-busy="true" aria-live="polite">
+    <span class="sr-only">Loading your latest health check…</span>
+    <header class="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
+      <div class="w-full max-w-md space-y-3">
+        <Skeleton height="h-6" width="w-32" rounded="full" />
+        <Skeleton height="h-10" width="w-3/4" rounded="lg" />
+        <Skeleton height="h-4" width="w-full" />
+        <Skeleton height="h-4" width="w-1/2" />
+      </div>
+      <Skeleton height="h-44" width="w-44" rounded="full" />
+    </header>
+    <div>
+      <Skeleton height="h-5" width="w-56" />
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+        {#each Array(4) as _, i}
+          <Skeleton height="h-36" width="w-full" rounded="2xl" />
+        {/each}
+      </div>
+    </div>
+    <div>
+      <Skeleton height="h-5" width="w-64" />
+      <div class="mt-4 space-y-3">
+        {#each Array(3) as _, i}
+          <Skeleton height="h-20" width="w-full" rounded="2xl" />
+        {/each}
+      </div>
+    </div>
   </section>
 {:else if status === 'no_audit'}
-  <section class="mx-auto mt-10 max-w-md text-center">
+  <section class="mx-auto mt-10 max-w-md text-center" in:fade={{ duration: 240 }}>
     <div class="card p-6 sm:p-8">
-      <p class="text-2xl">🪴</p>
+      <p class="text-3xl">🪴</p>
       <h1 class="mt-3 text-lg font-semibold text-canvas-ink">No health check yet</h1>
       <p class="mt-2 text-sm text-canvas-muted">
-        We haven't run a check for this business yet. Kick one off from the home page.
+        We haven't run a check for this business yet. Kick one off from the home page —
+        it usually takes about 5 minutes and we'll walk you through every step.
       </p>
-      <a class="btn-primary mt-4" href="/">Run a health check</a>
+      <div class="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
+        <a class="btn-primary" href="/">Run a health check</a>
+        <a class="btn-ghost" href="/dashboard">Back to dashboard</a>
+      </div>
     </div>
   </section>
 {:else if status === 'error'}
-  <section class="mx-auto mt-10 max-w-2xl text-center">
+  <section class="mx-auto mt-10 max-w-2xl text-center" in:fade={{ duration: 240 }}>
     <div class="card border border-action-100 bg-action-50 p-6 text-sm text-action-700">
-      <p class="font-medium">We couldn't load this business.</p>
-      <p class="mt-1">{errorMessage}</p>
-      <a href="/dashboard" class="btn-ghost mt-3 inline-flex text-action-700">
-        ← Back to your businesses
-      </a>
+      <p class="text-2xl">🌧️</p>
+      <p class="mt-2 font-medium">We couldn't load this business right now.</p>
+      <p class="mt-1 text-action-700/80">
+        {errorMessage ?? 'Give it a moment and try again — your data is still safe.'}
+      </p>
+      <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          class="btn-primary"
+          onclick={() => location.reload()}
+        >
+          ↻ Try again
+        </button>
+        <a href="/dashboard" class="btn-ghost text-action-700">
+          ← Back to your businesses
+        </a>
+      </div>
     </div>
   </section>
 {:else if audit}
@@ -226,6 +276,15 @@
       </section>
     {/if}
 
+    {#if audit.business?.id}
+      <CompetitorsSection
+        businessId={audit.business.id}
+        businessName={audit.business?.name || 'Your business'}
+        {tier}
+        {competitorLimit}
+      />
+    {/if}
+
     <footer
       class="card flex flex-col gap-4 border border-canvas-soft bg-canvas-soft/30 p-5 sm:flex-row sm:items-center sm:justify-between"
     >
@@ -235,20 +294,34 @@
           We'll re-run all four pillars and carry your "done" check-marks forward.
         </p>
         {#if reauditError}
-          <p class="mt-2 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700">
+          <p
+            class="mt-2 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700"
+            in:fade={{ duration: 180 }}
+            role="alert"
+          >
             {reauditError}
           </p>
         {/if}
       </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <a class="btn-ghost" href="/dashboard">All businesses</a>
+      <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <a class="btn-ghost w-full sm:w-auto" href="/dashboard">All businesses</a>
         <button
           type="button"
-          class="btn-primary"
+          class="btn-primary w-full sm:w-auto"
           onclick={handleReaudit}
           disabled={reauditing}
         >
-          {#if reauditing}Starting…{:else}↻ Re-audit now{/if}
+          {#if reauditing}
+            <span class="inline-flex items-center gap-2">
+              <span
+                class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                aria-hidden="true"
+              ></span>
+              Starting…
+            </span>
+          {:else}
+            ↻ Re-audit now
+          {/if}
         </button>
       </div>
     </footer>

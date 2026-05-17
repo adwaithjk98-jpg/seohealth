@@ -1,24 +1,48 @@
 import asyncio
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Any
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import SessionLocal
-from app.models import Audit, AuditSection, Business, Recommendation
+from app.models import (
+    Audit,
+    AuditSection,
+    Business,
+    Competitor,
+    CompetitorObservation,
+    Recommendation,
+    User,
+)
 from app.models.enums import (
     AuditSectionName,
     AuditSectionStatus,
     AuditStatus,
     RecommendationFixStatus,
     RecommendationSeverity,
+    UserPlan,
 )
 from app.services import audit_events
-from scrapers import audit_instagram, audit_maps, audit_nap, audit_website
+from app.services.email_service import (
+    SCORE_CHANGE_NOTIFY_THRESHOLD,
+    send_score_change_email,
+)
+from app.services.prune_old_data import prune_old_audit_data
+from scrapers import (
+    CompetitorMetrics,
+    audit_instagram,
+    audit_maps,
+    audit_nap,
+    audit_website,
+    fetch_competitor_metrics,
+)
 from scrapers.types import BusinessInput, SectionResult
+
+logger = logging.getLogger(__name__)
 
 # Fields a scraper is allowed to fill in on the Business row mid-pipeline.
 # Anything outside this allowlist is ignored — keeps a misbehaving scraper
@@ -97,6 +121,108 @@ def _apply_discovered_fields(
         db.commit()
         db.refresh(business)
     return changed
+
+
+def _previous_overall_score(
+    db: Session, business_id: int, current_audit_id: int
+) -> int | None:
+    """Overall score (mean of non-null section scores) for the most recent
+    completed audit before this one. ``None`` if no prior completed audit
+    exists — first-ever audit has nothing to compare against.
+    """
+    prev = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == business_id,
+            Audit.id != current_audit_id,
+            Audit.status == AuditStatus.done,
+        )
+        .order_by(desc(Audit.finished_at), desc(Audit.id))
+        .first()
+    )
+    if prev is None:
+        return None
+    scores = [s.score for s in prev.sections if s.score is not None]
+    return round(sum(scores) / len(scores)) if scores else None
+
+
+def _maybe_notify_score_change(
+    db: Session,
+    business: Business,
+    current_audit_id: int,
+    new_score: int,
+) -> None:
+    """Fire a score-change email when the new overall differs from the
+    previous completed audit by more than the notify threshold.
+
+    Failures are logged and swallowed: an audit run is already a long-tailed
+    operation and a flaky email provider shouldn't take the run with it.
+    """
+    previous = _previous_overall_score(db, business.id, current_audit_id)
+    if previous is None:
+        # First-ever completed audit — no baseline to compare against.
+        return
+    if abs(new_score - previous) <= SCORE_CHANGE_NOTIFY_THRESHOLD:
+        return
+    user = db.get(User, business.user_id)
+    if user is None:
+        return
+    dashboard_url = (
+        f"{settings.frontend_base_url.rstrip('/')}/businesses/{business.id}"
+    )
+    try:
+        send_score_change_email(
+            to_email=user.email,
+            business_name=business.name,
+            previous_score=previous,
+            new_score=new_score,
+            dashboard_url=dashboard_url,
+        )
+    except Exception:
+        logger.exception(
+            "score-change email failed for audit_id=%s business_id=%s",
+            current_audit_id,
+            business.id,
+        )
+
+
+def _active_competitors(db: Session, business_id: int) -> list[Competitor]:
+    return (
+        db.query(Competitor)
+        .filter(
+            Competitor.business_id == business_id,
+            Competitor.archived_at.is_(None),
+        )
+        .order_by(Competitor.id)
+        .all()
+    )
+
+
+def _persist_competitor_observations(
+    db: Session,
+    audit_id: int,
+    metrics: list[CompetitorMetrics],
+) -> None:
+    """Insert one row per competitor scraped during this audit.
+
+    We persist even when ``rating`` / ``review_count`` came back ``None`` so
+    the trend chart can show "we tried on this date" rather than a gap that
+    could be confused with the competitor being un-tracked at the time.
+    """
+    if not metrics:
+        return
+    now = datetime.now(timezone.utc)
+    for m in metrics:
+        db.add(
+            CompetitorObservation(
+                competitor_id=m.competitor_id,
+                audit_id=audit_id,
+                rating=m.rating,
+                review_count=m.review_count,
+                observed_at=now,
+            )
+        )
+    db.commit()
 
 
 def _persist_section(
@@ -268,11 +394,67 @@ async def run_audit(audit_id: int) -> None:
                 }
             )
 
+        # Phase 4 — competitor tracking. Paid-only, runs after the main
+        # pipeline so a competitor scraping failure can't tank the user's
+        # own audit score. Free users are explicitly skipped (we don't even
+        # enumerate their competitors row — there shouldn't be any).
+        user = db.get(User, business.user_id)
+        if user is not None and user.plan == UserPlan.paid:
+            competitors = _active_competitors(db, business.id)
+            tracked = [(c.id, c.maps_url) for c in competitors if c.maps_url]
+            if tracked:
+                await stream.publish(
+                    {
+                        "type": "competitors_started",
+                        "count": len(tracked),
+                    }
+                )
+                competitor_progress = _make_progress_cb("competitors")
+                try:
+                    metrics = await fetch_competitor_metrics(
+                        tracked, progress=competitor_progress
+                    )
+                    _persist_competitor_observations(db, audit_id, metrics)
+                    await stream.publish(
+                        {
+                            "type": "competitors_completed",
+                            "observed": len(metrics),
+                        }
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "competitor scraping failed for audit_id=%s", audit_id
+                    )
+                    await stream.publish(
+                        {
+                            "type": "competitors_failed",
+                            "error": repr(exc),
+                        }
+                    )
+
         overall = round(sum(section_scores) / len(section_scores)) if section_scores else 0
         audit = db.get(Audit, audit_id)
         audit.status = AuditStatus.done
         audit.finished_at = datetime.now(timezone.utc)
         db.commit()
+
+        # Phase 3 — fire a "your score changed" email if the overall moved
+        # meaningfully vs. the previous completed audit. Runs after the row
+        # is marked ``done`` so the email's dashboard link points at a fully
+        # persisted audit. Swallows its own errors.
+        _maybe_notify_score_change(db, business, audit_id, overall)
+
+        # Opportunistic storage pruning — NULLs heavy raw_data_json payloads
+        # on audits older than the retention window so Postgres doesn't
+        # balloon as audit volume grows. The rq-scheduler also runs this on
+        # a daily cron; firing it here means storage stays trimmed even when
+        # the scheduler process is down. Idempotent + cheap (single UPDATE).
+        try:
+            prune_old_audit_data(db)
+        except Exception:
+            logger.exception(
+                "prune_old_audit_data failed after audit_id=%s", audit_id
+            )
 
         await stream.publish(
             {

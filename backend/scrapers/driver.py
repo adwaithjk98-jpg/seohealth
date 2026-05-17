@@ -71,6 +71,20 @@ def _build_options() -> Options:
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
 
+    # Block heavy media (images, stylesheets, fonts) at the content-settings
+    # layer. The DOM is unaffected — <img src="…"> tags still render in the
+    # page source, so scrapers that *count* images on Google Maps work fine,
+    # we just never download the JPG/PNG bytes. Saves substantial proxy
+    # bandwidth on every audit run.
+    opts.add_experimental_option(
+        "prefs",
+        {
+            "profile.managed_default_content_settings.images": 2,
+            "profile.managed_default_content_settings.stylesheets": 2,
+            "profile.managed_default_content_settings.fonts": 2,
+        },
+    )
+
     chrome_binary = os.getenv("CHROME_BINARY")
     if chrome_binary:
         opts.binary_location = chrome_binary

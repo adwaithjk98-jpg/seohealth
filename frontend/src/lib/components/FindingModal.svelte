@@ -10,6 +10,7 @@
     impactLabel
   } from '$lib/dashboard.js';
   import { splitRecommendationBody, renderMarkdown } from '$lib/markdown.js';
+  import SuccessBurst from './SuccessBurst.svelte';
 
   /**
    * @type {{
@@ -45,6 +46,9 @@
 
   let saving = $state(false);
   let saveError = $state(/** @type {string | null} */ (null));
+  let showBurst = $state(false);
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let burstTimer = null;
 
   const isDone = $derived(recommendation?.fix_status === 'done');
 
@@ -81,12 +85,22 @@
 
   async function toggleDone() {
     if (!recommendation) return;
+    const wasDone = isDone;
     saving = true;
     saveError = null;
     try {
-      const next = isDone ? 'open' : 'done';
+      const next = wasDone ? 'open' : 'done';
       const updated = await patchRecommendation(recommendation.id, next);
       onUpdate(updated);
+      // Only celebrate the open → done direction. The reverse is an undo —
+      // not a moment to throw confetti.
+      if (!wasDone) {
+        if (burstTimer) clearTimeout(burstTimer);
+        showBurst = true;
+        burstTimer = setTimeout(() => {
+          showBurst = false;
+        }, 950);
+      }
     } catch (err) {
       saveError = err instanceof Error ? err.message : 'Could not save just yet.';
     } finally {
@@ -106,6 +120,7 @@
   onDestroy(() => {
     document.removeEventListener('keydown', onKey);
     document.body.style.overflow = '';
+    if (burstTimer) clearTimeout(burstTimer);
   });
 </script>
 
@@ -244,7 +259,7 @@
         <p class="mt-5 rounded-xl bg-action-50 px-3 py-2 text-sm text-action-700">{saveError}</p>
       {/if}
 
-      <div class="mt-7 flex flex-col-reverse gap-3 border-t border-canvas-soft pt-5 sm:flex-row sm:items-center sm:justify-between">
+      <div class="relative mt-7 flex flex-col-reverse gap-3 border-t border-canvas-soft pt-5 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-xs text-canvas-muted">
           {#if isDone}
             Marked done. We'll re-check this on your next audit.
@@ -252,20 +267,31 @@
             Take 5 minutes when you can — small steps add up.
           {/if}
         </p>
-        <button
-          type="button"
-          class={isDone ? 'btn-ghost' : 'btn-primary'}
-          disabled={saving}
-          onclick={toggleDone}
-        >
-          {#if saving}
-            Saving…
-          {:else if isDone}
-            ↺ Mark as not done
-          {:else}
-            ✓ Mark as done
+        <div class="relative">
+          <button
+            type="button"
+            class={`${isDone ? 'btn-ghost' : 'btn-primary'} w-full sm:w-auto`}
+            disabled={saving}
+            onclick={toggleDone}
+          >
+            {#if saving}
+              <span class="inline-flex items-center gap-2">
+                <span
+                  class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current/40 border-t-current"
+                  aria-hidden="true"
+                ></span>
+                Saving…
+              </span>
+            {:else if isDone}
+              ↺ Mark as not done
+            {:else}
+              ✓ Mark as done
+            {/if}
+          </button>
+          {#if showBurst}
+            <SuccessBurst />
           {/if}
-        </button>
+        </div>
       </div>
     </div>
   </div>

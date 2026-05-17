@@ -39,3 +39,8 @@ class BusinessResponse(BaseModel):
     latest_audit_id: int | None = None
     latest_audit_finished_at: datetime | None = None
     running_audit_id: int | None = None
+    # Phase 3 — when the auto-audit scheduler will next consider this business.
+    # ``null`` for free-tier users (auto-audits are paid-only); the dashboard
+    # uses this both to render "Next auto-audit scheduled for …" and to gate
+    # the "Upgrade to unlock weekly auto-audits" banner.
+    next_auto_audit_at: datetime | None = None

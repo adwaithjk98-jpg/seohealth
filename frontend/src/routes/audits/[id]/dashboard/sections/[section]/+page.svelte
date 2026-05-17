@@ -16,6 +16,7 @@
   } from '$lib/dashboard.js';
   import ScoreGauge from '$lib/components/ScoreGauge.svelte';
   import FindingModal from '$lib/components/FindingModal.svelte';
+  import Skeleton from '$lib/components/Skeleton.svelte';
 
   const auditId = $derived(parseInt($page.params.id, 10));
   const sectionKey = $derived($page.params.section);
@@ -118,25 +119,71 @@
 </script>
 
 {#if loading}
-  <section class="mx-auto mt-10 max-w-2xl text-center">
-    <p class="text-sm text-canvas-muted">Loading this section…</p>
+  <section class="space-y-8" aria-busy="true" aria-live="polite">
+    <span class="sr-only">Loading this section…</span>
+    <Skeleton height="h-4" width="w-32" />
+    <header class="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
+      <div class="flex w-full max-w-md items-start gap-4">
+        <Skeleton height="h-14" width="w-14" rounded="2xl" />
+        <div class="flex-1 space-y-2">
+          <Skeleton height="h-3" width="w-24" />
+          <Skeleton height="h-9" width="w-3/4" rounded="lg" />
+          <Skeleton height="h-4" width="w-full" />
+        </div>
+      </div>
+      <Skeleton height="h-40" width="w-40" rounded="full" />
+    </header>
+    <div>
+      <Skeleton height="h-5" width="w-48" />
+      <div class="mt-4 grid gap-3 sm:grid-cols-2">
+        {#each Array(4) as _, i}
+          <Skeleton height="h-20" width="w-full" rounded="2xl" />
+        {/each}
+      </div>
+    </div>
+    <div>
+      <Skeleton height="h-5" width="w-56" />
+      <div class="mt-4 space-y-3">
+        {#each Array(3) as _, i}
+          <Skeleton height="h-20" width="w-full" rounded="2xl" />
+        {/each}
+      </div>
+    </div>
   </section>
 {:else if errorMessage}
-  <section class="mx-auto mt-10 max-w-2xl text-center">
+  <section class="mx-auto mt-10 max-w-2xl text-center" in:fade={{ duration: 240 }}>
     <div class="card border border-action-100 bg-action-50 p-6 text-sm text-action-700">
-      <p class="font-medium">We couldn't load this section.</p>
-      <p class="mt-1">{errorMessage}</p>
-      <a href={`/audits/${auditId}/dashboard`} class="btn-ghost mt-3 inline-flex text-action-700">
-        ← Back to dashboard
-      </a>
+      <p class="text-2xl">🌧️</p>
+      <p class="mt-2 font-medium">We couldn't load this section right now.</p>
+      <p class="mt-1 text-action-700/80">
+        {errorMessage ?? 'Give it a moment and try again.'}
+      </p>
+      <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          class="btn-primary"
+          onclick={() => location.reload()}
+        >
+          ↻ Try again
+        </button>
+        <a href={`/audits/${auditId}/dashboard`} class="btn-ghost text-action-700">
+          ← Back to dashboard
+        </a>
+      </div>
     </div>
   </section>
 {:else if !section}
-  <section class="mx-auto mt-10 max-w-2xl text-center">
-    <p class="text-sm text-canvas-muted">We don't have data for this section yet.</p>
-    <a href={`/audits/${auditId}/dashboard`} class="btn-ghost mt-3 inline-flex">
-      ← Back to dashboard
-    </a>
+  <section class="mx-auto mt-10 max-w-md text-center" in:fade={{ duration: 240 }}>
+    <div class="card p-6 sm:p-8">
+      <p class="text-3xl">🪴</p>
+      <p class="mt-3 text-base font-medium text-canvas-ink">No data for this section yet</p>
+      <p class="mt-1 text-sm text-canvas-muted">
+        It may not have been part of your most recent health check.
+      </p>
+      <a href={`/audits/${auditId}/dashboard`} class="btn-primary mt-4 inline-flex">
+        ← Back to dashboard
+      </a>
+    </div>
   </section>
 {:else}
   <section class="space-y-8">
