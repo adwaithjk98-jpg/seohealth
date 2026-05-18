@@ -34,6 +34,17 @@ _STREAM_TTL_SECONDS = 24 * 60 * 60
 redis_conn = Redis.from_url(settings.redis_url)
 audit_queue = Queue("audits", connection=redis_conn)
 
+# Phase 4 — low-priority queue for heavy competitor work (cache refreshes
+# and Discovery Scans). Routed to a dedicated worker process so a half-hour
+# Selenium discovery run can't starve a user's live self-audit. See
+# ``scripts/run_competitor_worker.py``.
+competitor_queue = Queue("competitor_jobs", connection=redis_conn)
+
+# Cache refreshes are short (one Maps page) but Discovery Scans can run for
+# 10+ minutes. The latter sets the ceiling.
+_COMPETITOR_REFRESH_TIMEOUT_SECONDS = 180
+_DISCOVERY_SCAN_TIMEOUT_SECONDS = 60 * 30
+
 
 def _ensure_stream_exists(audit_id: int) -> None:
     """XADD a placeholder so the audit's Redis Stream key exists before
@@ -123,4 +134,39 @@ def enqueue_audit(audit_id: int) -> Job:
         audit_id,
         job_timeout=_JOB_TIMEOUT_SECONDS,
         on_failure=on_audit_job_failure,
+    )
+
+
+def enqueue_competitor_refresh(cache_key: str, maps_url: str) -> Job:
+    """Enqueue a background cache refresh for one competitor URL.
+
+    Driven by the daily cron in ``services.competitor_refresh``. Idempotent
+    against duplicate cache_keys *within a single dispatch tick* (the
+    dispatcher dedupes); RQ itself doesn't suppress structurally-identical
+    jobs, so two ticks scheduled within a refresh window can technically
+    enqueue twice. That's harmless — the second run just overwrites the
+    cache row with a fresher value.
+    """
+    return competitor_queue.enqueue(
+        "app.workers.competitor_jobs.refresh_cache_job",
+        cache_key,
+        maps_url,
+        job_timeout=_COMPETITOR_REFRESH_TIMEOUT_SECONDS,
+    )
+
+
+def enqueue_discovery_scan(scan_id: int) -> Job:
+    """Enqueue a user-initiated Discovery Scan.
+
+    ``at_front=True`` so a paid user who just clicked "Scan" doesn't sit
+    behind a backlog of cron-driven refresh jobs. Discovery Scans are
+    explicitly user-triggered and (per ``services.discovery_scan``) capped
+    to one per calendar month, so jumping the queue can't be abused into a
+    denial-of-service on routine refreshes.
+    """
+    return competitor_queue.enqueue(
+        "app.workers.competitor_jobs.discovery_scan_job",
+        scan_id,
+        job_timeout=_DISCOVERY_SCAN_TIMEOUT_SECONDS,
+        at_front=True,
     )

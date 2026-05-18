@@ -21,13 +21,42 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
-from scrapers.driver import DEFAULT_USER_AGENT
 from scrapers.types import BusinessInput, RecommendationDraft, SectionResult
 
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_S = 15.0
 INSTAGRAM_BASE = "https://www.instagram.com"
+
+# Headers a real Chrome navigation sends when typing a URL into the address
+# bar. Instagram now keys its bot heuristics off the presence of Sec-Fetch-*
+# (those headers were standardised in 2019 and every browser sends them) —
+# without them, anonymous fetches get the bare app shell with the meta tags
+# stripped, and our regex extraction sees a login wall. With them, the same
+# request returns the og:description tag carrying followers / following /
+# posts. See claude_prompts for the discovery trail.
+#
+# The User-Agent must also be a real-looking browser; an iPhone Safari UA gets
+# the friendliest payload empirically, but desktop Chrome paired with the full
+# Sec-Fetch-* set works fine and is a safer default for follow-on logged-in
+# parsing (which we may add later).
+_PROFILE_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 # OG description on a public IG profile reads:
 #   "1,518 Followers, 234 Following, 15 Posts - See Instagram photos and ..."
@@ -82,11 +111,7 @@ async def audit_instagram(business: BusinessInput) -> SectionResult:
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=REQUEST_TIMEOUT_S,
-            headers={
-                "User-Agent": DEFAULT_USER_AGENT,
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml",
-            },
+            headers=_PROFILE_FETCH_HEADERS,
         ) as client:
             resp = await client.get(url)
     except httpx.HTTPError as exc:
@@ -133,8 +158,22 @@ async def audit_instagram(business: BusinessInput) -> SectionResult:
     raw["last_post_days_ago"] = None
 
     if "followers" not in raw and "post_count" not in raw:
-        raw["error"] = "could not parse profile (likely login wall)"
-        return SectionResult(score=0, status="failed", raw_data=raw, recommendations=[])
+        # Login wall: Instagram returned the sign-in page instead of the
+        # profile, so anything we "parsed" off it is the chrome of that page,
+        # not the merchant's bio. Strip the bio_* sub-checks (they'd render as
+        # misleading "Missing" labels on the dashboard) and keep only the
+        # identification + error fields.
+        return SectionResult(
+            score=0,
+            status="failed",
+            raw_data={
+                "handle": handle,
+                "url": url,
+                "status_code": raw.get("status_code"),
+                "error": "could not parse profile (likely login wall)",
+            },
+            recommendations=[_login_wall_rec(handle)],
+        )
 
     score = _score_instagram(raw)
     recommendations = _recommendations(raw)
@@ -233,6 +272,37 @@ def _bio_has_location(biography: str | None) -> bool:
 
 
 # --- scoring + recommendations ----------------------------------------------
+
+
+def _login_wall_rec(handle: str) -> RecommendationDraft:
+    """Explain the login-wall case as a finding so the user gets context for
+    the F grade instead of the "Nothing flagged" empty state.
+    """
+    return RecommendationDraft(
+        severity="medium",
+        title="Instagram hid your profile from us behind a login wall",
+        body_markdown=(
+            "**Why it matters**\n\n"
+            f"We tried to read **@{handle}** without logging in, but "
+            "Instagram returned its sign-in page instead of your profile. "
+            "That doesn't mean anything is wrong with your account — it's a "
+            "platform-wide change Instagram made to discourage scraping. It "
+            "does mean we can't measure followers, posts, or recent activity "
+            "for you on this audit.\n\n"
+            "**How to fix it**\n\n"
+            "1. Open Instagram and confirm **@" + handle + "** is set to a "
+            "**Business** or **Creator** account, not Private — a Private "
+            "profile makes this problem permanent.\n"
+            "2. From a fresh logged-out browser tab, visit "
+            f"`https://www.instagram.com/{handle}/` and check that you can "
+            "see followers and post count without being asked to log in.\n"
+            "3. If even logged-out you can't see those numbers, Instagram is "
+            "currently rate-limiting profile previews — re-run this audit in "
+            "a day or two and it usually works again."
+        ),
+        estimated_impact="medium",
+        estimated_time="5 min",
+    )
 
 
 def _score_instagram(raw: dict[str, Any]) -> int:

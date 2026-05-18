@@ -44,6 +44,22 @@ class Settings(BaseSettings):
     # configured on the plan in the Razorpay dashboard.
     paid_plan_price_label: str = "₹399 / month"
 
+    # Path to the standalone ``audit_scraper`` engine (sibling repo). The
+    # competitor scraper adapter spawns ``python3 scrape_competitors.py``
+    # from this directory for Discovery-Scan-style bulk runs. Defaults to
+    # the local dev layout (``~/Desktop/audit_scraper``); override in prod.
+    audit_scraper_path: str = "/Users/adwaithjayakrishnan/Desktop/audit_scraper"
+    # Python interpreter used to run the scraper. The engine has its own
+    # venv (``audit_scraper/venv``) which carries Selenium + chromedriver,
+    # so the default points there. Override when deploying.
+    audit_scraper_python: str = (
+        "/Users/adwaithjayakrishnan/Desktop/audit_scraper/venv/bin/python3"
+    )
+    # Per-run wall-clock budget for a Discovery Scan subprocess. The
+    # scraper is staged and self-throttles, but a stuck Chrome can still
+    # hang for hours — this is the last line of defence.
+    audit_scraper_timeout_seconds: int = 900
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

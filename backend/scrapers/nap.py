@@ -30,6 +30,11 @@ _LEG_LABEL = {"phone": "phone number", "address": "address", "name": "business n
 async def audit_nap(
     business: BusinessInput, prior_results: dict[str, dict[str, Any]]
 ) -> SectionResult:
+    # Sources actually audited (Maps / Website / Instagram successes). The
+    # runner now strips failed sections from ``prior_results`` so a skipped
+    # source isn't mistaken for "we checked and it was empty".
+    audited_sources = frozenset(prior_results.keys())
+
     sources_input: dict[str, dict[str, Any]] = {}
     for src in SOURCES:
         prior = prior_results.get(src) or {}
@@ -46,25 +51,28 @@ async def audit_nap(
     score = score_nap(comparison)
 
     raw: dict[str, Any] = {
-        "sources_checked": [_SOURCE_LABEL[s] for s in SOURCES if prior_results.get(s)],
+        "sources_checked": [_SOURCE_LABEL[s] for s in SOURCES if s in audited_sources],
+        "audited_sources": sorted(audited_sources),
         "comparison": comparison,
     }
 
-    recommendations = _build_recommendations(comparison)
+    recommendations = _build_recommendations(comparison, audited_sources)
     return SectionResult(score=score, status="done", raw_data=raw, recommendations=recommendations)
 
 
 # --- recommendations ---------------------------------------------------------
 
 
-def _build_recommendations(comparison: dict[str, Any]) -> list[RecommendationDraft]:
+def _build_recommendations(
+    comparison: dict[str, Any], audited_sources: frozenset[str]
+) -> list[RecommendationDraft]:
     recs: list[RecommendationDraft] = []
 
     any_finding = False
     for leg in LEGS:
         leg_data = comparison.get(leg) or {}
         recs.extend(_mismatch_recs(leg, leg_data))
-        recs.extend(_missing_recs(leg, leg_data))
+        recs.extend(_missing_recs(leg, leg_data, audited_sources))
         if recs:
             any_finding = True
 
@@ -123,16 +131,30 @@ def _mismatch_recs(leg: str, leg_data: dict[str, Any]) -> list[RecommendationDra
     return out
 
 
-def _missing_recs(leg: str, leg_data: dict[str, Any]) -> list[RecommendationDraft]:
-    """For each source we expected to find a value on but didn't, suggest a fix."""
+def _missing_recs(
+    leg: str,
+    leg_data: dict[str, Any],
+    audited_sources: frozenset[str],
+) -> list[RecommendationDraft]:
+    """For each source we expected to find a value on but didn't, suggest a fix.
+
+    Restricts the candidate set to sources the runner actually scraped — a
+    skipped Maps section produces no Maps phone-number, but that's a
+    Maps-listing problem (already its own finding), not a "phone missing
+    from Maps" one. We only flag a source when we *did* visit it and the
+    leg came back empty.
+    """
     raw_values = leg_data.get("raw_values") or {}
     out: list[RecommendationDraft] = []
 
     if leg == "address":
         # IG never reports a postal address — silence on IG isn't actionable.
-        candidate_sources = ("maps", "website")
+        base_sources = ("maps", "website")
     else:
-        candidate_sources = SOURCES
+        base_sources = SOURCES
+    candidate_sources = tuple(s for s in base_sources if s in audited_sources)
+    if not candidate_sources:
+        return out
 
     # Only nag about a missing source when at least one *other* source has it —
     # otherwise we have no reference to call this a "consistency" problem.

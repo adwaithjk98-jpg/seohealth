@@ -27,7 +27,14 @@ def _trend(current: int | None, previous: int | None) -> str | None:
 
 
 def _audit_overall_score(audit: Audit) -> int | None:
-    scores = [s.score for s in audit.sections if s.score is not None]
+    # Skip failed sections — same rule as audit_runner + audit_view, so the
+    # tile score on the dashboard matches the overall the user just saw on
+    # the live-completion screen.
+    scores = [
+        s.score
+        for s in audit.sections
+        if s.score is not None and s.status.value != "failed"
+    ]
     return round(sum(scores) / len(scores)) if scores else None
 
 

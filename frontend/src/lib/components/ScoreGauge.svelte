@@ -84,39 +84,59 @@
 </script>
 
 <div class="flex flex-col items-center" style="width:{size}px">
-  <svg width={size} height={size} viewBox="0 0 {size} {size}" aria-hidden="true">
-    <circle
-      cx={size / 2}
-      cy={size / 2}
-      r={radius}
-      fill="none"
-      stroke={trackStroke}
-      stroke-width="14"
-    />
-    <circle
-      cx={size / 2}
-      cy={size / 2}
-      r={radius}
-      fill="none"
-      stroke={stroke}
-      stroke-width="14"
-      stroke-linecap="round"
-      stroke-dasharray={circumference}
-      stroke-dashoffset={dashOffset}
-      transform="rotate(-90 {size / 2} {size / 2})"
-      style="transition: stroke 400ms ease;"
-    />
-  </svg>
-  <div class="-mt-[60%] flex flex-col items-center" aria-live="polite">
-    <p class="text-5xl font-semibold tracking-tight text-canvas-ink">
-      {score == null ? '—' : displayed}
-    </p>
-    {#if grade}
-      <p class="mt-1 text-sm font-medium text-canvas-muted">Grade {grade}</p>
-    {/if}
-    {#if label}
-      <p class="mt-1 text-xs uppercase tracking-wide text-canvas-muted">{label}</p>
-    {/if}
+  {#if label}
+    <!-- Caption used to live inside the ring under "Grade X", which pushed
+         the text block past the ring's bottom edge and collided with the
+         gauge stroke. Surfacing it above keeps the inside of the ring to
+         two cleanly-centered lines. -->
+    <p class="mb-2 text-xs uppercase tracking-wide text-canvas-muted">{label}</p>
+  {/if}
+  <!-- Relative wrapper + absolute-positioned text overlay so subsequent
+       siblings (friendly label, trend pill) flow from BELOW the gauge in
+       normal document order. Previously we pulled the text into the ring
+       with -mt-[58%], which left the friendly label rendering inside the
+       ring instead of underneath it. -->
+  <div class="relative" style="width:{size}px;height:{size}px">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 {size} {size}"
+      class="absolute inset-0"
+      aria-hidden="true"
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={trackStroke}
+        stroke-width="14"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={stroke}
+        stroke-width="14"
+        stroke-linecap="round"
+        stroke-dasharray={circumference}
+        stroke-dashoffset={dashOffset}
+        transform="rotate(-90 {size / 2} {size / 2})"
+        style="transition: stroke 400ms ease;"
+      />
+    </svg>
+    <div
+      class="absolute inset-0 flex flex-col items-center justify-center"
+      aria-live="polite"
+    >
+      <p class="text-5xl font-semibold tracking-tight text-canvas-ink leading-none">
+        {score == null ? '—' : displayed}
+      </p>
+      {#if grade}
+        <p class="mt-2 text-sm font-medium text-canvas-muted">Grade {grade}</p>
+      {/if}
+    </div>
   </div>
   {#if friendly}
     <p class="mt-2 text-sm font-medium text-canvas-ink">{friendly}</p>

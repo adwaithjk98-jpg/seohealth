@@ -196,7 +196,7 @@
     </div>
     <div class="flex flex-wrap items-center gap-3">
       {#if !atBusinessLimit}
-        <a class="btn-ghost w-full sm:w-auto" href="/">+ Add another business</a>
+        <a class="btn-ghost w-full sm:w-auto" href="/?add=1">+ Add another business</a>
       {:else if tier === 'free'}
         <div
           class="card flex w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"

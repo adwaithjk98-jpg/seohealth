@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 PANEL_WAIT_S = 12
 RATING_PATTERN = re.compile(r"\b([1-5](?:\.\d)?)\s*(?:stars?)?\s*\(([\d,]+)\)")
 
+# H1 values that mean "Google didn't auto-pick a listing for this query" rather
+# than "this is the business's actual page". en-US is our forced locale via
+# --lang in the Chrome options, so we only need the English strings.
+_SEARCH_RESULTS_H1 = frozenset({"results", "search results"})
+
 
 async def audit_maps(
     business: BusinessInput, *, progress: ProgressCb = None
@@ -87,6 +92,16 @@ def _audit_maps_sync(
         _emit(progress, "reading_listing")
         raw = _extract_panel(driver)
 
+        # Search by name+city often lands on a /maps/search list rather than
+        # the merchant's panel — Google only auto-picks when the query has a
+        # single unambiguous hit. When that happens, walk into the first
+        # result so the rest of the audit has a real listing to read.
+        if not raw.get("found"):
+            if _click_first_search_result(driver):
+                _emit(progress, "drilled_into_first_result")
+                detect_captcha(driver)
+                raw = _extract_panel(driver)
+
     if not raw.get("found"):
         raw["url"] = target_url
         _emit(progress, "listing_not_found")
@@ -94,7 +109,7 @@ def _audit_maps_sync(
             score=0,
             status="failed",
             raw_data=raw,
-            recommendations=[],
+            recommendations=[_listing_not_found_rec(business)],
         )
 
     raw["url"] = driver_current_url_safe(target_url, raw)
@@ -134,14 +149,72 @@ def _build_search_url(name: str, city: str) -> str:
     return f"https://www.google.com/maps/search/{query}"
 
 
+# Selectors for the first result tile on /maps/search/<query>. Google has
+# multiple A/B layouts in flight at any time, so we try a couple of stable-ish
+# patterns and accept whichever lands first. They all eventually navigate to a
+# /maps/place/ URL.
+_FIRST_RESULT_SELECTORS = (
+    "div[role='feed'] a[href*='/maps/place/']",
+    "a.hfpxzc",
+    "a[href*='/maps/place/']",
+)
+
+
+def _click_first_search_result(driver: WebDriver) -> bool:
+    """Walk into the first result on a /maps/search results page. Returns
+    True when the click landed on a real listing (h1 is no longer the
+    generic 'Results' chrome).
+    """
+    for selector in _FIRST_RESULT_SELECTORS:
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, selector)
+        except WebDriverException:
+            continue
+        try:
+            href = el.get_attribute("href") or ""
+        except WebDriverException:
+            href = ""
+        try:
+            if href and "/maps/place/" in href:
+                # Direct navigation is steadier than .click() — avoids
+                # intercepted-element errors from overlayed map tiles.
+                driver.get(href)
+            else:
+                el.click()
+        except WebDriverException:
+            continue
+        try:
+            WebDriverWait(driver, PANEL_WAIT_S).until(
+                lambda d: (d.find_element(By.TAG_NAME, "h1").text or "").strip().lower()
+                not in _SEARCH_RESULTS_H1
+            )
+            return True
+        except (TimeoutException, WebDriverException):
+            continue
+    return False
+
+
 def _extract_panel(driver: WebDriver) -> dict[str, Any]:
-    """Pull rating / review count / category / hours / website indicator."""
+    """Pull rating / review count / category / hours / website indicator.
+
+    Returns ``{"found": False}`` alone when no listing was loaded. Sub-check
+    fields like ``has_hours`` were previously read off the search-results
+    page (always-true-ish defaults from Google's chrome) and rendered as
+    "Opening hours: Filled in" alongside an F grade — a confusing
+    contradiction. Only populate sub-checks when we know we're looking at
+    a real business panel.
+    """
     raw: dict[str, Any] = {"found": False}
 
     name = _safe_text(driver, By.CSS_SELECTOR, "h1")
-    if name:
-        raw["name"] = name
-        raw["found"] = True
+    # When a search like /maps/search/<query> returns a list (not an auto-picked
+    # listing), Google's h1 is the literal "Results" — capturing that as the
+    # business name was scoring fake successes against the search-results page.
+    if not name or name.strip().lower() in _SEARCH_RESULTS_H1:
+        return raw
+
+    raw["name"] = name
+    raw["found"] = True
 
     page_source = ""
     try:
@@ -389,6 +462,38 @@ def _estimate_photo_count(page_source: str) -> int | None:
 
 
 # --- scoring + recommendations ----------------------------------------------
+
+
+def _listing_not_found_rec(business: BusinessInput) -> RecommendationDraft:
+    """Surfaces the "we couldn't find your Maps listing" case as a finding.
+    Without this, the dashboard's section detail rendered an F grade *and* the
+    cheery "Nothing flagged here — this pillar is in good shape!" empty state,
+    which left the user with no idea what to fix.
+    """
+    by_url = business.maps_url is not None
+    return RecommendationDraft(
+        severity="high",
+        title="We couldn't find your Google Maps listing",
+        body_markdown=(
+            "**Why it matters**\n\n"
+            "Google Maps is where most local customers find a business. If we "
+            "can't pull up your listing from "
+            + ("the URL you provided" if by_url else f"a search for **{business.name}** in **{business.city}**")
+            + ", search engines probably can't either — that means missed calls, "
+            "missed bookings, and a weaker local ranking overall.\n\n"
+            "**How to fix it**\n\n"
+            "1. Search for your business name in Google Maps from your phone "
+            "and confirm a profile actually exists.\n"
+            "2. If it does, copy the share link from Maps and paste it on the "
+            "**Add business** page here — that gives us a direct route in.\n"
+            "3. If it doesn't, claim or create a free **Google Business "
+            "Profile** at business.google.com using the same business name "
+            "and address you use everywhere else.\n"
+            "4. Re-run this audit once the listing is live."
+        ),
+        estimated_impact="big",
+        estimated_time="30 min",
+    )
 
 
 def _score_maps(raw: dict[str, Any]) -> int:

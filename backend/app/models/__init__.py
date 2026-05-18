@@ -3,7 +3,9 @@ from app.models.audit_section import AuditSection
 from app.models.base import Base
 from app.models.business import Business
 from app.models.competitor import Competitor
+from app.models.competitor_metric_cache import CompetitorMetricCache
 from app.models.competitor_observation import CompetitorObservation
+from app.models.discovery_scan import DiscoveryScan
 from app.models.recommendation import Recommendation
 from app.models.session import Session
 from app.models.subscription import Subscription
@@ -17,7 +19,9 @@ __all__ = [
     "AuditSection",
     "Recommendation",
     "Competitor",
+    "CompetitorMetricCache",
     "CompetitorObservation",
+    "DiscoveryScan",
     "Session",
     "Subscription",
 ]

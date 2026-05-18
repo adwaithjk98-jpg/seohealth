@@ -32,13 +32,13 @@ from app.services.email_service import (
     send_score_change_email,
 )
 from app.services.prune_old_data import prune_old_audit_data
+from app.services.competitor_cache import fetch_competitor_metrics_cached
 from scrapers import (
     CompetitorMetrics,
     audit_instagram,
     audit_maps,
     audit_nap,
     audit_website,
-    fetch_competitor_metrics,
 )
 from scrapers.types import BusinessInput, SectionResult
 
@@ -142,7 +142,14 @@ def _previous_overall_score(
     )
     if prev is None:
         return None
-    scores = [s.score for s in prev.sections if s.score is not None]
+    # Same skip-failed rule the live run uses (see section_scores append
+    # below). Keeps score-change notification thresholds from triggering on
+    # phantom drops when a previously-failed section is still failing.
+    scores = [
+        s.score
+        for s in prev.sections
+        if s.score is not None and s.status.value != "failed"
+    ]
     return round(sum(scores) / len(scores)) if scores else None
 
 
@@ -373,7 +380,13 @@ async def run_audit(audit_id: int) -> None:
                 continue
 
             _persist_section(db, audit_id, section, result, carried_done_titles)
-            prior_raw[section.value] = result.raw_data or {}
+            # Only feed *successful* sections into the NAP comparison's
+            # prior_raw. A skipped Maps section has no phone/address to
+            # compare against — including it caused NAP to generate
+            # "we couldn't find your phone on Google Maps" findings against
+            # sources that were never actually checked.
+            if result.status != AuditSectionStatus.failed.value:
+                prior_raw[section.value] = result.raw_data or {}
             if result.discovered_fields and _apply_discovered_fields(
                 db, business, result.discovered_fields
             ):
@@ -411,8 +424,8 @@ async def run_audit(audit_id: int) -> None:
                 )
                 competitor_progress = _make_progress_cb("competitors")
                 try:
-                    metrics = await fetch_competitor_metrics(
-                        tracked, progress=competitor_progress
+                    metrics = await fetch_competitor_metrics_cached(
+                        db, tracked, progress=competitor_progress
                     )
                     _persist_competitor_observations(db, audit_id, metrics)
                     await stream.publish(

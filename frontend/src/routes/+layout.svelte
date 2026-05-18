@@ -79,7 +79,7 @@
         <a class="btn-ghost" href="/">Home</a>
         {#if authState.user}
           <a class="btn-ghost" href="/dashboard">Dashboard</a>
-          <a class="btn-ghost" href="/billing">Billing</a>
+          <a class="btn-ghost hidden sm:inline-flex" href="/billing">Billing</a>
           <span class="hidden text-xs text-canvas-muted sm:inline">{authState.user.email}</span>
           <button
             type="button"

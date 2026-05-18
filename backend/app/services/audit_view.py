@@ -68,7 +68,7 @@ def _previous_section_scores(
     scores: list[int] = []
     for sec in prev_audit.sections:
         by_section[sec.section.value] = sec.score
-        if sec.score is not None:
+        if sec.score is not None and sec.status.value != "failed":
             scores.append(sec.score)
     overall = round(sum(scores) / len(scores)) if scores else None
     return by_section, overall
@@ -122,7 +122,12 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
                 ],
             }
         )
-        if score is not None:
+        # Mirror the live runner's "skip failed sections" rule
+        # (audit_runner.py around the section_scores append). Counting a
+        # section that failed because the user has no IG handle on file as
+        # a hard 0 was making the dashboard's overall diverge from the
+        # number the live-completion screen had just shown them.
+        if score is not None and sec.status.value != "failed":
             section_scores.append(score)
 
     # Sort sections in plan-defined display order.

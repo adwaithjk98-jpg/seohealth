@@ -48,3 +48,10 @@ class SubscriptionStatus(str, enum.Enum):
     active = "active"
     cancelled = "cancelled"
     past_due = "past_due"
+
+
+class DiscoveryScanStatus(str, enum.Enum):
+    pending = "pending"
+    running = "running"
+    done = "done"
+    failed = "failed"

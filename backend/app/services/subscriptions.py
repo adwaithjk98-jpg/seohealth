@@ -46,8 +46,24 @@ logger = logging.getLogger(__name__)
 # Limits per AuditAppPlan §8 ("Pricing model"). Centralised here so /api/auth/me,
 # /api/subscriptions/me, and the business-create guard share one source of truth.
 TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
-    UserPlan.free: {"businesses": 1, "audits_per_week": 1, "competitors": 0},
-    UserPlan.paid: {"businesses": 3, "audits_per_week": 7, "competitors": 3},
+    UserPlan.free: {
+        "businesses": 1,
+        "audits_per_week": 1,
+        "competitors": 0,
+        # Phase 4 §3: free users cannot run Discovery Scans at all. The
+        # gating service raises 402 well before consulting this number,
+        # but keep it 0 here so any future "did this user use any quota?"
+        # check returns the right answer for both tiers.
+        "discovery_scans_per_month": 0,
+    },
+    UserPlan.paid: {
+        "businesses": 3,
+        "audits_per_week": 7,
+        "competitors": 3,
+        # One bulk Discovery Scan per calendar month per the prompt. Bump
+        # here when the higher pricing tier lands.
+        "discovery_scans_per_month": 1,
+    },
 }
 
 PAID_PLAN_TIER = "paid"
@@ -114,6 +130,15 @@ def can_user_add_business(db: DbSession, user: User) -> bool:
 
 def user_competitor_limit(user: User) -> int:
     return TIER_LIMITS[user.plan]["competitors"]
+
+
+def user_discovery_scan_monthly_limit(user: User) -> int:
+    """Number of Discovery Scans this user's tier allows per calendar month.
+
+    Centralised so the gate, the /api/auth/me payload, and any future
+    "you've used X of Y" UI hint share one source of truth.
+    """
+    return TIER_LIMITS[user.plan]["discovery_scans_per_month"]
 
 
 # --- Razorpay HTTP client (test mode) -----------------------------------------

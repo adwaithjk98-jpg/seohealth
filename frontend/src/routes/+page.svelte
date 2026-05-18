@@ -35,20 +35,27 @@
   onMount(async () => {
     if (!authState.loaded) await loadCurrentUser();
     if (authState.user) {
-      // M2 — a returning user's home should be their dashboard, not a fresh
-      // "Add your business" form. Only fall through to the form if they
-      // genuinely don't have any businesses yet.
-      try {
-        const res = await fetch('/api/businesses', { credentials: 'same-origin' });
-        if (res.ok) {
-          const list = await res.json();
-          if (Array.isArray(list) && list.length > 0) {
-            await goto('/dashboard', { replaceState: true });
-            return;
+      // M2 — a returning user's plain "/" should land on their dashboard,
+      // not a fresh "Add your business" form. The dashboard's
+      // "+ Add another business" CTA links to "/?add=1" to opt out of
+      // this redirect, so a paid user with room for more businesses can
+      // actually reach the form.
+      const explicitAdd =
+        typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).has('add');
+      if (!explicitAdd) {
+        try {
+          const res = await fetch('/api/businesses', { credentials: 'same-origin' });
+          if (res.ok) {
+            const list = await res.json();
+            if (Array.isArray(list) && list.length > 0) {
+              await goto('/dashboard', { replaceState: true });
+              return;
+            }
           }
+        } catch {
+          // Network blip — fall through to the form rather than dead-ending.
         }
-      } catch {
-        // Network blip — fall through to the form rather than dead-ending.
       }
     }
     ready = true;
