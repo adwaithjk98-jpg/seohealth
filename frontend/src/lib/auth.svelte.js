@@ -76,27 +76,41 @@ async function readJsonError(res) {
   return `Request failed (${res.status})`;
 }
 
+/**
+ * Shared in-flight promise so concurrent callers await the same fetch
+ * instead of racing. Previously this returned ``authState.user`` early
+ * when ``loading`` was true, which let the root layout's onMount run
+ * its auth gate against stale (null) state and bounce a hard-loaded
+ * deep link to /login → /dashboard before the real fetch finished.
+ * @type {Promise<CurrentUser | null> | null}
+ */
+let _inflightSessionLoad = null;
+
 export async function loadCurrentUser() {
-  if (authState.loading) return authState.user;
+  if (_inflightSessionLoad) return _inflightSessionLoad;
   authState.loading = true;
-  try {
-    // /auth/session returns 200 with { user: null } when no valid session,
-    // so the page-load probe doesn't fill the console with red 401s.
-    const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
-    if (res.ok) {
-      const body = await res.json();
-      authState.user = body?.user ?? null;
-    } else {
-      // Transient 5xx → leave user untouched so we don't bounce to /login.
+  _inflightSessionLoad = (async () => {
+    try {
+      // /auth/session returns 200 with { user: null } when no valid session,
+      // so the page-load probe doesn't fill the console with red 401s.
+      const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+      if (res.ok) {
+        const body = await res.json();
+        authState.user = body?.user ?? null;
+      } else {
+        // Transient 5xx → leave user untouched so we don't bounce to /login.
+      }
+    } catch {
+      // network error — treat as not signed in
+      authState.user = null;
+    } finally {
+      authState.loaded = true;
+      authState.loading = false;
+      _inflightSessionLoad = null;
     }
-  } catch {
-    // network error — treat as not signed in
-    authState.user = null;
-  } finally {
-    authState.loaded = true;
-    authState.loading = false;
-  }
-  return authState.user;
+    return authState.user;
+  })();
+  return _inflightSessionLoad;
 }
 
 /** @param {string} email */

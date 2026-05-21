@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     # hang for hours — this is the last line of defence.
     audit_scraper_timeout_seconds: int = 900
 
+    # Anthropic API key for the competitor-insights phrasing layer. When
+    # unset, the insights service falls back to a deterministic sentence
+    # so dev workflows don't depend on a paid key.
+    anthropic_api_key: str = ""
+    # Model used for the insights phrasing layer. Haiku is the cheap +
+    # fast tier; the workload (one short summarisation per insight per
+    # request) doesn't benefit from a larger model.
+    anthropic_insights_model: str = "claude-haiku-4-5-20251001"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

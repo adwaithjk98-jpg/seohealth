@@ -20,6 +20,12 @@ class Competitor(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     maps_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Manual-add modal lets users pre-seed IG + website so the audit
+    # pipeline can skip the Maps-listing → social-link extraction step on
+    # the first observation. Both are optional — the scraper still
+    # discovers them from the Maps listing when omitted.
+    instagram_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    website_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     added_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

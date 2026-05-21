@@ -27,8 +27,12 @@ from app.schemas.competitor import (
     CompetitorCreateRequest,
     CompetitorResponse,
     CompetitorTrend,
+    HubInsightsResponse,
+    InsightCardResponse,
+    InsightFactResponse,
     TrendPoint,
 )
+from app.services import competitor_insights as insights_service
 from app.services import subscriptions as subs_service
 
 router = APIRouter()
@@ -99,9 +103,13 @@ def _to_response(
         business_id=competitor.business_id,
         name=competitor.name,
         maps_url=competitor.maps_url,
+        instagram_url=competitor.instagram_url,
+        website_url=competitor.website_url,
         added_at=competitor.added_at,
         latest_rating=latest.rating if latest else None,
         latest_review_count=latest.review_count if latest else None,
+        latest_instagram_followers=latest.instagram_followers if latest else None,
+        latest_instagram_posts=latest.instagram_posts if latest else None,
         latest_observed_at=latest.observed_at if latest else None,
         observation_count=observation_count,
     )
@@ -186,10 +194,15 @@ def add_competitor(
             },
         )
 
+    # Phase 4.6: cap is total across all of the user's businesses (not
+    # per-business). Join through Business so a user can't sidestep the
+    # cap by spreading competitors across each of their businesses.
     current_count = (
         db.query(Competitor)
+        .join(Business, Competitor.business_id == Business.id)
         .filter(
-            Competitor.business_id == business.id,
+            Business.user_id == user.id,
+            Business.archived_at.is_(None),
             Competitor.archived_at.is_(None),
         )
         .count()
@@ -199,7 +212,7 @@ def add_competitor(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "code": "competitor_limit_reached",
-                "message": f"Your plan allows up to {limit} competitors per business.",
+                "message": f"Your plan allows up to {limit} competitors total. Remove one to add another.",
                 "tier": user.plan.value,
                 "limit": limit,
                 "competitor_count": current_count,
@@ -207,10 +220,14 @@ def add_competitor(
         )
 
     name = (payload.name or "").strip() or "Competitor"
+    instagram_url = (payload.instagram_url or "").strip() or None
+    website_url = (payload.website_url or "").strip() or None
     competitor = Competitor(
         business_id=business.id,
         name=name,
         maps_url=maps_url,
+        instagram_url=instagram_url,
+        website_url=website_url,
     )
     db.add(competitor)
     db.commit()
@@ -266,8 +283,17 @@ def get_business_trends(
         raw = (maps.raw_data_json or {}) if maps else {}
         rating = raw.get("rating") if isinstance(raw, dict) else None
         review_count = raw.get("review_count") if isinstance(raw, dict) else None
-        if rating is None and review_count is None:
-            # Skip audits that couldn't read Maps at all — plotting (null, null)
+        ig_followers = (
+            raw.get("instagram_followers") if isinstance(raw, dict) else None
+        )
+        ig_posts = raw.get("instagram_posts") if isinstance(raw, dict) else None
+        if (
+            rating is None
+            and review_count is None
+            and ig_followers is None
+            and ig_posts is None
+        ):
+            # Skip audits that couldn't read Maps at all — plotting all-null
             # would just be a phantom point with no signal.
             continue
         business_points.append(
@@ -276,6 +302,8 @@ def get_business_trends(
                 observed_at=audit.finished_at or audit.started_at,
                 rating=float(rating) if rating is not None else None,
                 review_count=int(review_count) if review_count is not None else None,
+                instagram_followers=int(ig_followers) if ig_followers is not None else None,
+                instagram_posts=int(ig_posts) if ig_posts is not None else None,
             )
         )
 
@@ -313,6 +341,8 @@ def get_business_trends(
                             observed_at=o.observed_at,
                             rating=o.rating,
                             review_count=o.review_count,
+                            instagram_followers=o.instagram_followers,
+                            instagram_posts=o.instagram_posts,
                         )
                         for o in comp_obs
                     ],
@@ -354,3 +384,40 @@ def archive_competitor(
     competitor.archived_at = datetime.now(timezone.utc)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/businesses/{business_id}/competitor-insights",
+    response_model=HubInsightsResponse,
+)
+def get_competitor_insights(
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> HubInsightsResponse:
+    """Hub insight cards for one business (top winning factor + opportunity).
+
+    The deterministic math in ``services.competitor_insights`` decides which
+    cards (if any) are honest; the LLM is only a phrasing layer. Empty
+    ``cards`` means there isn't enough comparable data yet, not an error.
+    """
+    _own_business_or_404(db, user, business_id)
+    cards = insights_service.build_hub_insights(db, user, business_id)
+    return HubInsightsResponse(
+        business_id=business_id,
+        cards=[
+            InsightCardResponse(
+                headline=c.headline,
+                sentence=c.sentence,
+                fact=InsightFactResponse(
+                    kind=c.fact.kind,
+                    metric=c.fact.metric,
+                    user_value=c.fact.user_value,
+                    competitor_average=c.fact.competitor_average,
+                    competitor_sample_size=c.fact.competitor_sample_size,
+                    delta=c.fact.delta,
+                ),
+            )
+            for c in cards
+        ],
+    )

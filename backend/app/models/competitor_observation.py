@@ -23,6 +23,12 @@ class CompetitorObservation(Base):
     )
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     review_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Social metrics surfaced by the audit pipeline when the competitor's
+    # Maps listing exposes an Instagram link. Both are nullable — they stay
+    # ``None`` for competitors without a discoverable IG handle, or until
+    # the scraper is wired to extract them.
+    instagram_followers: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    instagram_posts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

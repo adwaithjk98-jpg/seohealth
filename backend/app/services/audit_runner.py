@@ -226,6 +226,8 @@ def _persist_competitor_observations(
                 audit_id=audit_id,
                 rating=m.rating,
                 review_count=m.review_count,
+                instagram_followers=m.instagram_followers,
+                instagram_posts=m.instagram_posts,
                 observed_at=now,
             )
         )

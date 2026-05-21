@@ -644,17 +644,22 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
 class CompetitorMetrics:
     """Lightweight metric snapshot for one competitor listing.
 
-    Phase 4 only tracks rating + review_count per audit; the full panel
-    extraction is overkill since competitors don't get the recommendations
-    treatment. ``error`` is populated when the listing failed to load so the
-    caller can persist a row with null metrics (still useful as a "we tried"
-    signal) without aborting the rest of the batch.
+    Phase 4 originally tracked rating + review_count per audit; 4.6 adds
+    Instagram follower + post count slots so the Market matrix and Deep
+    Dive can offer them as toggle metrics. Both are optional — the
+    fetcher leaves them ``None`` until the scraper is extended to
+    actually extract IG data, and the DB persists null cleanly. ``error``
+    is populated when the listing failed to load so the caller can
+    persist a row with null metrics (still useful as a "we tried" signal)
+    without aborting the rest of the batch.
     """
 
     competitor_id: int
     name: str | None = None
     rating: float | None = None
     review_count: int | None = None
+    instagram_followers: int | None = None
+    instagram_posts: int | None = None
     error: str | None = None
 
 

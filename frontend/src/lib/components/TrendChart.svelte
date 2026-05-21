@@ -32,7 +32,7 @@
    *   business: any[],
    *   competitors: any[],
    *   businessName?: string,
-   *   metric?: 'review_count' | 'rating'
+   *   metric?: 'review_count' | 'rating' | 'instagram_followers' | 'instagram_posts'
    * }}
    */
   let { business = [], competitors = [], businessName = 'Your business', metric = 'review_count' } = $props();
@@ -106,7 +106,14 @@
   }
 
   function buildOptions() {
-    const yLabel = metric === 'rating' ? 'Rating (1–5)' : 'Review count';
+    const yLabel =
+      metric === 'rating'
+        ? 'Rating (1–5)'
+        : metric === 'instagram_followers'
+          ? 'Instagram followers'
+          : metric === 'instagram_posts'
+            ? 'Instagram posts'
+            : 'Review count';
     const yMax = metric === 'rating' ? 5 : undefined;
     const yMin = metric === 'rating' ? 0 : 0;
     /** @type {any} */
@@ -195,8 +202,17 @@
     chart = null;
   });
 
-  const hasAnyBusinessPoint = $derived(
-    (business ?? []).some((p) => p[metric] != null)
+  // The "we'll start drawing your line" overlay should only appear when
+  // the chart truly has nothing to draw — not just when the *primary*
+  // business series is empty. The Market view, for instance, passes
+  // additional user businesses through the competitors channel; if any
+  // of those have observations the chart already has lines and the
+  // overlay would just sit awkwardly behind the legend.
+  const hasAnyPoint = $derived(
+    (business ?? []).some((p) => p[metric] != null) ||
+      (competitors ?? []).some((/** @type {any} */ c) =>
+        (c.observations ?? []).some((/** @type {any} */ p) => p[metric] != null)
+      )
   );
 </script>
 
@@ -214,7 +230,7 @@
         <p class="mt-1 text-xs">Refresh the page to try again.</p>
       </div>
     </div>
-  {:else if !hasAnyBusinessPoint}
+  {:else if !hasAnyPoint}
     <div class="absolute inset-x-0 bottom-6 text-center text-xs text-canvas-muted">
       We'll start drawing your line after your next audit captures rating data.
     </div>

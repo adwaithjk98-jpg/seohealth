@@ -54,9 +54,18 @@ export async function listCompetitors(businessId) {
   return res.json();
 }
 
-export async function addCompetitor(businessId, { maps_url, name }) {
+/**
+ * @param {number} businessId
+ * @param {{ maps_url: string, name?: string, instagram_url?: string, website_url?: string }} payload
+ */
+export async function addCompetitor(
+  businessId,
+  { maps_url, name, instagram_url, website_url }
+) {
   const body = { maps_url };
   if (name) body.name = name;
+  if (instagram_url) body.instagram_url = instagram_url;
+  if (website_url) body.website_url = website_url;
   const res = await fetch(`/api/businesses/${businessId}/competitors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -81,6 +90,53 @@ export async function deleteCompetitor(businessId, competitorId) {
 
 export async function getBusinessTrends(businessId) {
   const res = await fetch(`/api/businesses/${businessId}/trends`, {
+    credentials: 'same-origin'
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
+/** @param {number} businessId */
+export async function getCompetitorInsights(businessId) {
+  const res = await fetch(`/api/businesses/${businessId}/competitor-insights`, {
+    credentials: 'same-origin'
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
+// --- Discovery scan (Phase 4) -----------------------------------------------
+// The scan is async: POST returns immediately with a `pending` row, and the
+// caller polls GET until `status` is terminal (`done` or `failed`).
+
+/**
+ * @param {{ business_id: number, query: string, num_leads?: number, fields?: string[], filters?: string | null }} payload
+ */
+export async function createDiscoveryScan(payload) {
+  const body = {
+    business_id: payload.business_id,
+    query: payload.query,
+    num_leads: payload.num_leads ?? 20,
+    fields: payload.fields ?? ['name', 'address', 'category', 'rating', 'review_count', 'maps_url'],
+    filters: payload.filters ?? null
+  };
+  const res = await fetch('/api/discovery-scans', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = new Error(await readJsonError(res));
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+/** @param {number} scanId */
+export async function getDiscoveryScan(scanId) {
+  const res = await fetch(`/api/discovery-scans/${scanId}`, {
     credentials: 'same-origin'
   });
   if (!res.ok) throw new Error(await readJsonError(res));

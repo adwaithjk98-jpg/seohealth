@@ -59,7 +59,11 @@ TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
     UserPlan.paid: {
         "businesses": 3,
         "audits_per_week": 7,
-        "competitors": 3,
+        # Phase 4.6: the cap is now total across *all* of the user's
+        # businesses, not per-business. The Hub counter reads this as
+        # "X / 4 added" — see api/competitors.add_competitor for the
+        # enforcement change.
+        "competitors": 4,
         # One bulk Discovery Scan per calendar month per the prompt. Bump
         # here when the higher pricing tier lands.
         "discovery_scans_per_month": 1,
