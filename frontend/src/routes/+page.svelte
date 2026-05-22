@@ -30,6 +30,9 @@
   const atBusinessLimit = $derived(
     !!authState.user && businessCount >= businessLimit
   );
+  const overBusinessLimit = $derived(
+    !!authState.user && businessCount > businessLimit
+  );
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
 
   onMount(async () => {
@@ -210,9 +213,13 @@
         {tier === 'free' ? 'Upgrade to add another business' : 'Plan limit reached'}
       </h2>
       <p class="mt-2 text-sm text-canvas-muted">
-        {tier === 'free'
-          ? "You've used your 1 free business slot. Upgrade to the paid plan to track up to 3 businesses with weekly health checks."
-          : `You're at the ${businessLimit}-business limit for your plan.`}
+        {#if tier === 'free'}
+          You've used your 1 free business slot. Upgrade to the paid plan to track up to 3 businesses with weekly health checks.
+        {:else if overBusinessLimit}
+          You're tracking {businessCount} businesses but your plan covers {businessLimit}. We'll keep everything visible — archive one to add a new business going forward.
+        {:else}
+          You've hit the {businessLimit}-business limit on your plan.
+        {/if}
       </p>
       <div class="mt-5 flex flex-wrap gap-3">
         <a href="/dashboard" class="btn-ghost">Back to dashboard</a>

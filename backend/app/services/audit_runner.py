@@ -304,6 +304,7 @@ async def run_audit(audit_id: int) -> None:
 
         business_input = _to_business_input(business)
         section_scores: list[int] = []
+        section_outcomes: dict[AuditSectionName, str] = {}
         carried_done_titles = _previous_done_titles(db, business.id, audit_id)
         # NAP needs to compare against earlier sections' raw_data; we keep a
         # running map keyed by section name and pass it as a second arg below.
@@ -371,6 +372,7 @@ async def run_audit(audit_id: int) -> None:
                     )
                 )
                 db.commit()
+                section_outcomes[section] = "failed"
                 await stream.publish(
                     {
                         "type": "section_completed",
@@ -382,6 +384,7 @@ async def run_audit(audit_id: int) -> None:
                 continue
 
             _persist_section(db, audit_id, section, result, carried_done_titles)
+            section_outcomes[section] = result.status
             # Only feed *successful* sections into the NAP comparison's
             # prior_raw. A skipped Maps section has no phone/address to
             # compare against — including it caused NAP to generate
@@ -449,6 +452,36 @@ async def run_audit(audit_id: int) -> None:
 
         overall = round(sum(section_scores) / len(section_scores)) if section_scores else 0
         audit = db.get(Audit, audit_id)
+
+        # An audit only counts as ``done`` if Maps actually loaded — it's
+        # the spine of the audit (name/address/reviews come from there,
+        # and the website + IG scrapers depend on what it discovered).
+        # NAP runs on whatever earlier sections collected, so it can
+        # "succeed" even when nothing else did; relying on overall
+        # status=done was masking audits where Maps failed and the user
+        # saw a confident-looking score derived from one stub section.
+        # Website / Instagram are allowed to fail (the business may not
+        # have them yet) — those failures are visible per-section in the
+        # dashboard and don't invalidate the overall read.
+        maps_outcome = section_outcomes.get(AuditSectionName.maps)
+        if maps_outcome != "done":
+            audit.status = AuditStatus.failed
+            audit.error_message = (
+                "We couldn't reach your Google Maps listing — please "
+                "double-check the business name and city, or paste the "
+                "Maps URL on the Edit business page, then try again."
+            )
+            audit.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            await stream.publish(
+                {
+                    "type": "audit_failed",
+                    "error": audit.error_message,
+                    "audit_id": audit_id,
+                }
+            )
+            return
+
         audit.status = AuditStatus.done
         audit.finished_at = datetime.now(timezone.utc)
         db.commit()

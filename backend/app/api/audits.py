@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -16,9 +17,11 @@ from app.schemas.audit import (
     AuditCreateRequest,
     AuditCreateResponse,
     AuditDetailResponse,
+    AuditQuotaResponse,
 )
 from app.services import audit_events
 from app.services import auth as auth_service
+from app.services import subscriptions as subs_service
 from app.services.audit_view import build_audit_detail
 from app.workers.queue import enqueue_audit
 
@@ -27,6 +30,50 @@ router = APIRouter()
 
 def _user_owns_business(business: Business, user: User) -> bool:
     return business.user_id == user.id
+
+
+def _now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _audit_usage_this_week(db: Session, user_id: int) -> tuple[int, datetime]:
+    """Audits the user has started in the rolling 7-day window.
+
+    Rolling window (not calendar week) so the user can predict exactly
+    when the next slot frees up — ``(window_start, started_at + 7d)``.
+    Returns the count and the timestamp at which the oldest audit in the
+    window ages out (i.e., when one slot reopens).
+
+    ``failed`` audits are excluded from the count — the runner only
+    marks an audit failed when Maps couldn't load (so no useful work
+    was done) or when an unrecoverable crash short-circuits the
+    pipeline. In both cases the user shouldn't have a quota slot
+    consumed by something that effectively didn't run. Pending/running
+    audits still count so a stuck job can't be retried into a quota
+    overrun.
+    """
+    now = _now_naive()
+    window_start = now - timedelta(days=7)
+    audits_in_window: list[Audit] = (
+        db.query(Audit)
+        .join(Business, Audit.business_id == Business.id)
+        .filter(
+            Business.user_id == user_id,
+            Audit.started_at >= window_start,
+            Audit.status != AuditStatus.failed,
+        )
+        .order_by(Audit.started_at)
+        .all()
+    )
+    used = len(audits_in_window)
+    # The next reset is when the oldest in-window audit hits its
+    # 7-day anniversary. If we have no audits in the window, "reset" is
+    # meaningless — return now + 7d as a stable upper bound.
+    if audits_in_window:
+        next_reset = audits_in_window[0].started_at + timedelta(days=7)
+    else:
+        next_reset = now + timedelta(days=7)
+    return used, next_reset
 
 
 def _load_audit_for_user(db: Session, audit_id: int, user: User) -> Audit:
@@ -53,6 +100,29 @@ def create_audit(
     business = db.get(Business, payload.business_id)
     if business is None or not _user_owns_business(business, user):
         raise HTTPException(status_code=404, detail="business not found")
+
+    # Phase 4.7 — manual audits respect the weekly tier quota. Auto-
+    # scheduled audits (trigger='scheduled') bypass the gate because
+    # those run on the backend's cron, not user input. Without this,
+    # the Audit tab's counter would be a hint with no teeth.
+    if payload.trigger != AuditTrigger.scheduled.value:
+        weekly_limit = subs_service.TIER_LIMITS[user.plan]["audits_per_week"]
+        used, next_reset = _audit_usage_this_week(db, user.id)
+        if used >= weekly_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "code": "audit_weekly_limit",
+                    "message": (
+                        f"You've used your {weekly_limit} audit"
+                        f"{'s' if weekly_limit != 1 else ''} for this week."
+                    ),
+                    "tier": user.plan.value,
+                    "limit": weekly_limit,
+                    "used": used,
+                    "next_reset_at": next_reset.isoformat(),
+                },
+            )
 
     # Guard against stacking audits on a business that already has one
     # in-flight (pending or running). The on_failure callback in
@@ -108,6 +178,28 @@ def create_audit(
         status=audit.status.value,
         stream_url=f"/api/audits/{audit.id}/stream",
         started_at=audit.started_at,
+    )
+
+
+@router.get("/audits/quota", response_model=AuditQuotaResponse)
+def get_audit_quota(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> AuditQuotaResponse:
+    """Rolling 7-day audit usage + tier limit for the Audit tab counter.
+
+    Frontend uses this to gate the Run-audit CTA. Defined ahead of the
+    ``/{audit_id}`` GET so FastAPI's path matching doesn't try to route
+    ``quota`` as an id.
+    """
+    limit = subs_service.TIER_LIMITS[user.plan]["audits_per_week"]
+    used, period_end = _audit_usage_this_week(db, user.id)
+    return AuditQuotaResponse(
+        used=used,
+        limit=limit,
+        remaining=max(0, limit - used),
+        period_end=period_end,
+        tier=user.plan.value,
     )
 
 

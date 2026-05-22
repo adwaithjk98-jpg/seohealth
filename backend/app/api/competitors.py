@@ -34,6 +34,7 @@ from app.schemas.competitor import (
 )
 from app.services import competitor_insights as insights_service
 from app.services import subscriptions as subs_service
+from app.services import visibility_score as visibility_service
 
 router = APIRouter()
 
@@ -98,6 +99,15 @@ def _to_response(
     latest: CompetitorObservation | None,
     observation_count: int,
 ) -> CompetitorResponse:
+    visibility = (
+        visibility_service.compute(
+            rating=latest.rating,
+            review_count=latest.review_count,
+            instagram_followers=latest.instagram_followers,
+        )
+        if latest is not None
+        else None
+    )
     return CompetitorResponse(
         id=competitor.id,
         business_id=competitor.business_id,
@@ -110,6 +120,7 @@ def _to_response(
         latest_review_count=latest.review_count if latest else None,
         latest_instagram_followers=latest.instagram_followers if latest else None,
         latest_instagram_posts=latest.instagram_posts if latest else None,
+        latest_visibility_score=visibility,
         latest_observed_at=latest.observed_at if latest else None,
         observation_count=observation_count,
     )
@@ -304,6 +315,11 @@ def get_business_trends(
                 review_count=int(review_count) if review_count is not None else None,
                 instagram_followers=int(ig_followers) if ig_followers is not None else None,
                 instagram_posts=int(ig_posts) if ig_posts is not None else None,
+                visibility_score=visibility_service.compute(
+                    rating=float(rating) if rating is not None else None,
+                    review_count=int(review_count) if review_count is not None else None,
+                    instagram_followers=int(ig_followers) if ig_followers is not None else None,
+                ),
             )
         )
 
@@ -343,6 +359,11 @@ def get_business_trends(
                             review_count=o.review_count,
                             instagram_followers=o.instagram_followers,
                             instagram_posts=o.instagram_posts,
+                            visibility_score=visibility_service.compute(
+                                rating=o.rating,
+                                review_count=o.review_count,
+                                instagram_followers=o.instagram_followers,
+                            ),
                         )
                         for o in comp_obs
                     ],

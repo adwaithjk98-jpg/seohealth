@@ -19,7 +19,11 @@ export async function getAudit(auditId) {
 
 export async function getLatestAuditForBusiness(businessId) {
   const res = await fetch(`/api/businesses/${businessId}/latest-audit`);
-  if (!res.ok) throw new Error(await readJsonError(res));
+  if (!res.ok) {
+    const err = new Error(await readJsonError(res));
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -40,6 +44,16 @@ export async function startAudit(businessId) {
     credentials: 'same-origin',
     body: JSON.stringify({ business_id: businessId })
   });
+  if (!res.ok) {
+    const err = new Error(await readJsonError(res));
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function getAuditQuota() {
+  const res = await fetch('/api/audits/quota', { credentials: 'same-origin' });
   if (!res.ok) throw new Error(await readJsonError(res));
   return res.json();
 }

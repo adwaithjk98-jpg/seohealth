@@ -22,6 +22,11 @@
   const subState = $derived(authState.user?.subscription_state ?? null);
   const businessLimit = $derived(subState?.limits?.businesses ?? 1);
   const atBusinessLimit = $derived(businesses.length >= businessLimit);
+  // Over-cap can happen after a plan downgrade — the row still exists,
+  // it just can't be audited the same way going forward. Surface that
+  // honestly instead of saying "you're at the N-business limit" when
+  // the user has clearly more than N.
+  const overBusinessLimit = $derived(businesses.length > businessLimit);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
   const isPaid = $derived(tier === 'paid');
 
@@ -206,9 +211,14 @@
           </p>
           <a class="btn-primary w-full sm:w-auto" href="/billing">Upgrade to paid</a>
         </div>
+      {:else if overBusinessLimit}
+        <p class="text-xs text-canvas-muted">
+          You're tracking {businesses.length} businesses but your plan covers {businessLimit}.
+          We'll keep everything visible — archive one to add a new business going forward.
+        </p>
       {:else}
         <p class="text-xs text-canvas-muted">
-          You're at the {businessLimit}-business limit for your plan.
+          You've hit the {businessLimit}-business limit on your plan.
         </p>
       {/if}
     </div>

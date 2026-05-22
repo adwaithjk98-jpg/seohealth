@@ -3,13 +3,12 @@
 
   let { children } = $props();
 
-  // Audit lives inside the per-business view today, so the Audit tab points
-  // at the dashboard (where the user picks the business to audit). It still
-  // lights up when the user is *inside* an audit or business detail view, so
-  // they can see which mode they're in.
+  // Phase 4.7 — the Audit tab now has its own dedicated route. The
+  // Overview tab keeps the dashboard summary (business list). The Audit
+  // tab is the management surface (quota, manual run, scheduled).
   const tabs = [
     { key: 'overview', label: 'Overview', href: '/dashboard' },
-    { key: 'audit', label: 'Audit', href: '/dashboard' },
+    { key: 'audit', label: 'Audit', href: '/dashboard/audit' },
     { key: 'competitors', label: 'Competitors', href: '/dashboard/competitors' }
   ];
 
@@ -18,7 +17,15 @@
   /** @param {string} key */
   function isActive(key) {
     if (key === 'competitors') return pathname.startsWith('/dashboard/competitors');
-    if (key === 'audit') return pathname.startsWith('/audits') || pathname.startsWith('/businesses');
+    // Audit lights up on its own route AND inside any in-progress
+    // audit view, so the user always knows which mode they're in.
+    if (key === 'audit') {
+      return (
+        pathname.startsWith('/dashboard/audit') ||
+        pathname.startsWith('/audits') ||
+        pathname.startsWith('/businesses')
+      );
+    }
     if (key === 'overview') return pathname === '/dashboard' || pathname === '/dashboard/';
     return false;
   }

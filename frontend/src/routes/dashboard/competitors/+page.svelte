@@ -108,6 +108,7 @@
 
   /** @param {any} card */
   function deltaLabel(card) {
+    if (card.fact.kind === 'matched') return 'On par with avg';
     const sign = card.fact.delta >= 0 ? '+' : '';
     const value =
       card.fact.metric === 'rating'
@@ -286,35 +287,45 @@
       {:else}
         <div class="grid gap-3 sm:grid-cols-2">
           {#each insightCards as card, idx (`${card.business_id}-${card.fact.metric}-${card.fact.kind}`)}
-            {@const isWinning = card.fact.kind === 'winning'}
+            {@const kind = card.fact.kind}
+            {@const cardClass =
+              kind === 'winning'
+                ? 'border-healthy-100 bg-gradient-to-br from-healthy-50/70 to-white'
+                : kind === 'matched'
+                  ? 'border-canvas-soft bg-gradient-to-br from-canvas-soft/40 to-white'
+                  : 'border-attention-100 bg-gradient-to-br from-attention-50/70 to-white'}
+            {@const badgeClass =
+              kind === 'winning'
+                ? 'bg-healthy-100 text-healthy-700'
+                : kind === 'matched'
+                  ? 'bg-canvas-soft text-canvas-muted'
+                  : 'bg-attention-100 text-attention-700'}
+            {@const dotClass =
+              kind === 'winning'
+                ? 'bg-healthy-500'
+                : kind === 'matched'
+                  ? 'bg-canvas-muted'
+                  : 'bg-attention-500'}
+            {@const deltaClass =
+              kind === 'winning'
+                ? 'text-healthy-700'
+                : kind === 'matched'
+                  ? 'text-canvas-muted'
+                  : 'text-attention-700'}
+            {@const badgeLabel =
+              kind === 'winning' ? 'Winning' : kind === 'matched' ? 'Matched' : 'Opportunity'}
             <article
-              class={`card relative overflow-hidden p-5 transition hover:shadow-md ${
-                isWinning
-                  ? 'border-healthy-100 bg-gradient-to-br from-healthy-50/70 to-white'
-                  : 'border-attention-100 bg-gradient-to-br from-attention-50/70 to-white'
-              }`}
+              class={`card relative overflow-hidden p-5 transition hover:shadow-md ${cardClass}`}
               in:fly={{ y: 6, delay: 40 * idx, duration: 240, easing: quintOut }}
             >
               <div class="flex items-center justify-between gap-3">
                 <span
-                  class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    isWinning
-                      ? 'bg-healthy-100 text-healthy-700'
-                      : 'bg-attention-100 text-attention-700'
-                  }`}
+                  class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${badgeClass}`}
                 >
-                  <span
-                    class={`h-1.5 w-1.5 rounded-full ${
-                      isWinning ? 'bg-healthy-500' : 'bg-attention-500'
-                    }`}
-                  ></span>
-                  {isWinning ? 'Winning' : 'Opportunity'}
+                  <span class={`h-1.5 w-1.5 rounded-full ${dotClass}`}></span>
+                  {badgeLabel}
                 </span>
-                <span
-                  class={`text-xs font-medium ${
-                    isWinning ? 'text-healthy-700' : 'text-attention-700'
-                  }`}
-                >
+                <span class={`text-xs font-medium ${deltaClass}`}>
                   {deltaLabel(card)}
                 </span>
               </div>

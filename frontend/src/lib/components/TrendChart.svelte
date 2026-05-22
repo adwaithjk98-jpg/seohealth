@@ -32,10 +32,21 @@
    *   business: any[],
    *   competitors: any[],
    *   businessName?: string,
-   *   metric?: 'review_count' | 'rating' | 'instagram_followers' | 'instagram_posts'
+   *   metric?: 'review_count' | 'rating' | 'instagram_followers' | 'instagram_posts',
+   *   showLegend?: boolean
    * }}
    */
-  let { business = [], competitors = [], businessName = 'Your business', metric = 'review_count' } = $props();
+  let {
+    business = [],
+    competitors = [],
+    businessName = 'Your business',
+    metric = 'review_count',
+    // Caller can disable the built-in Chart.js legend when surrounding
+    // UI already labels the series (e.g. the Market page has interactive
+    // filter pills with matching colored dots; the Deep Dive page header
+    // names both sides). Keeps the chart taller and the layout cleaner.
+    showLegend = true
+  } = $props();
 
   /** @type {HTMLCanvasElement | null} */
   let canvas = $state(null);
@@ -123,6 +134,7 @@
       interaction: { mode: 'nearest', intersect: false },
       plugins: {
         legend: {
+          display: showLegend,
           position: 'bottom',
           labels: { boxWidth: 12, boxHeight: 12, usePointStyle: true, padding: 16 }
         },
@@ -194,6 +206,7 @@
     void business;
     void competitors;
     void metric;
+    void showLegend;
     if (chart) renderChart();
   });
 

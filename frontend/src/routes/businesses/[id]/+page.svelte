@@ -45,7 +45,7 @@
     } catch (err) {
       // 404 here is both "no completed audit yet" and "business not yours"
       // — we render the same affordance for the user-visible case.
-      if (err instanceof Error && /404/.test(err.message)) {
+      if (err?.status === 404) {
         status = 'no_audit';
         return;
       }

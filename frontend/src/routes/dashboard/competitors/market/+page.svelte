@@ -150,10 +150,12 @@
         kind: 'self',
         label: b.business.name,
         sublabel: b.business.city,
-        // Overall Visibility is the audit's composite 0-100 score the
-        // dashboard already shows. Competitors don't have one (no audit
-        // is run on them), so theirs is null and the matrix prints "—".
-        overall_visibility: b.business.latest_score ?? null,
+        // Overall Visibility is the deterministic 0–100 blend
+        // (rating + reviews + IG followers) that the backend computes
+        // identically for both sides. The full audit composite still
+        // lives on the dashboard as ``latest_score``; this row uses the
+        // narrower blend so the matrix is apples-to-apples.
+        overall_visibility: lastBizPoint?.visibility_score ?? null,
         rating: lastBizPoint?.rating ?? null,
         review_count: lastBizPoint?.review_count ?? null,
         instagram_followers: lastBizPoint?.instagram_followers ?? null,
@@ -165,7 +167,7 @@
           kind: 'competitor',
           label: comp.name,
           sublabel: `Tracked for ${b.business.name}`,
-          overall_visibility: null,
+          overall_visibility: comp.latest_visibility_score ?? null,
           rating: comp.latest_rating,
           review_count: comp.latest_review_count,
           instagram_followers: comp.latest_instagram_followers ?? null,
@@ -210,7 +212,7 @@
     {
       key: 'overall_visibility',
       label: 'Overall visibility',
-      hint: 'Audit score (0–100)',
+      hint: 'Blended score (0–100)',
       format: (v) => String(Math.round(v))
     },
     { key: 'rating', label: 'Rating', format: (v) => v.toFixed(1) + ' ★' },
@@ -357,8 +359,15 @@
           competitors={chartCompetitors}
           businessName={chartBusinessName}
           {metric}
+          showLegend={false}
         />
       </div>
+
+      <p class="mt-4 text-xs text-canvas-muted">
+        These lines aren't live — each point is a snapshot from when an audit
+        ran. Your lines update when you run an audit on a business; competitor
+        lines refresh on the weekly automatic check.
+      </p>
     </div>
 
     <!-- Transposed data matrix: columns = entities (You + competitors), -->
@@ -450,8 +459,9 @@
       </div>
       <p class="text-xs text-canvas-muted">
         Ranks are derived locally from the latest observation per column. Cells with no value
-        yet show "—" and aren't ranked. Overall visibility is only available for your own
-        businesses (it's the audit score), so competitors show "—" for that row.
+        yet show "—" and aren't ranked. Overall visibility is a deterministic 0–100 blend of
+        rating, reviews, and Instagram followers — computed identically for you and every
+        competitor so the row is apples-to-apples.
       </p>
     </section>
   {/if}

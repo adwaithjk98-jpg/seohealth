@@ -44,6 +44,10 @@ class CompetitorResponse(BaseModel):
     latest_review_count: int | None = None
     latest_instagram_followers: int | None = None
     latest_instagram_posts: int | None = None
+    # Deterministic 0–100 blend of rating + review_count + IG followers,
+    # computed server-side from the latest observation. The Market matrix
+    # uses this to put the user and each competitor on the same scale.
+    latest_visibility_score: int | None = None
     latest_observed_at: datetime | None = None
     observation_count: int = 0
 
@@ -67,6 +71,10 @@ class TrendPoint(BaseModel):
     review_count: int | None
     instagram_followers: int | None = None
     instagram_posts: int | None = None
+    # Server-computed visibility blend for this single point; lets the
+    # client plot "Overall visibility over time" without re-deriving the
+    # formula on the frontend.
+    visibility_score: int | None = None
 
 
 class CompetitorTrend(BaseModel):

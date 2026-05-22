@@ -216,6 +216,21 @@ def _extract_panel(driver: WebDriver) -> dict[str, Any]:
     raw["name"] = name
     raw["found"] = True
 
+    # The review-count span inside F7nice renders a tick after the rating
+    # span on slow/headless Chrome runs. A short explicit wait here means
+    # ``_find_review_count`` reliably sees both children instead of
+    # racing on rating-only and falling back to None.
+    try:
+        WebDriverWait(driver, 3).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "div.F7nice [aria-label$='reviews'], div.F7nice [aria-label$='review']")
+            )
+        )
+    except TimeoutException:
+        # Not all listings have reviews yet — fall through and let the
+        # JS extractor return None for those cases.
+        pass
+
     page_source = ""
     try:
         page_source = driver.page_source
@@ -285,12 +300,49 @@ def _parse_rating_and_reviews(
 
 
 def _find_review_count(driver: WebDriver, page_source: str) -> int | None:
+    # Google Maps no longer puts the review count on a ``button`` —
+    # today's DOM has it on a span inside ``div.F7nice`` carrying
+    # ``aria-label="N reviews"`` (e.g. ``<span role="img"
+    # aria-label="85 reviews">(85)</span>``). The rating span renders
+    # before the review-count sibling, so Selenium's ``find_element``
+    # often hit between those two renders in headless Chrome and
+    # returned None for every audit.
+    #
+    # Use a JS extractor that runs inside the page (avoids
+    # find_element race timing) and tries the aria-label first, then
+    # the F7nice textContent regex, then any aria-label across the
+    # whole document as a last-resort.
     try:
-        el = driver.find_element(By.CSS_SELECTOR, "button[aria-label*='reviews']")
-        label = el.get_attribute("aria-label") or el.text or ""
-        m = re.search(r"([\d,]+)\s+reviews?", label, re.IGNORECASE)
-        if m:
-            return int(m.group(1).replace(",", ""))
+        rc_text = driver.execute_script(
+            """
+            // 1. aria-label on the review-count span inside F7nice
+            var ar = document.querySelector(
+                "div.F7nice [aria-label$='reviews'], div.F7nice [aria-label$='review']"
+            );
+            if (ar) {
+                var m = ar.getAttribute('aria-label').match(/([\\d,.]+\\s*[KMkm]?)\\s+reviews?/i);
+                if (m) return m[1];
+            }
+            // 2. textContent of F7nice itself (works even when reflow lags)
+            var f = document.querySelector('div.F7nice');
+            if (f) {
+                var m2 = (f.textContent || '').match(/\\(([\\d,.]+\\s*[KMkm]?)\\)/);
+                if (m2) return m2[1];
+            }
+            // 3. anywhere else on the page (occasional A/B variants put
+            //    the same aria-label on a wrapper button or link)
+            var any = document.querySelector(
+                "[aria-label$='reviews'], [aria-label$='review']"
+            );
+            if (any) {
+                var m3 = any.getAttribute('aria-label').match(/([\\d,.]+\\s*[KMkm]?)\\s+reviews?/i);
+                if (m3) return m3[1];
+            }
+            return null;
+            """
+        )
+        if rc_text:
+            return _parse_review_count_text(rc_text)
     except WebDriverException:
         pass
 
@@ -302,6 +354,22 @@ def _find_review_count(driver: WebDriver, page_source: str) -> int | None:
             except ValueError:
                 return None
     return None
+
+
+def _parse_review_count_text(value: str) -> int | None:
+    """Parse "1,234" / "1.2K" / "85" into an integer review count."""
+    text = (value or "").strip().replace(",", "")
+    if not text:
+        return None
+    mult = 1.0
+    last = text[-1].lower()
+    if last in ("k", "m"):
+        mult = 1_000.0 if last == "k" else 1_000_000.0
+        text = text[:-1].strip()
+    try:
+        return int(round(float(text) * mult))
+    except ValueError:
+        return None
 
 
 def _parse_category(driver: WebDriver) -> str | None:

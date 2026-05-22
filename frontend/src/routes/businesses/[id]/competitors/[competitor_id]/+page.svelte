@@ -14,7 +14,9 @@
    *   data: {
    *     business: any | null,
    *     competitor: any | null,
-   *     trends: any | null,
+   *     anchorTrends: any | null,
+   *     businessTrends: Record<number, any>,
+   *     businesses: any[],
    *     error: string | null
    *   }
    * }}
@@ -23,31 +25,28 @@
 
   const business = $derived(data?.business ?? null);
   const competitor = $derived(data?.competitor ?? null);
-  const trends = $derived(data?.trends ?? null);
+  const anchorTrends = $derived(data?.anchorTrends ?? { business: [], competitors: [] });
+  const businessTrends = $derived(data?.businessTrends ?? {});
+  const businesses = $derived(data?.businesses ?? []);
   const errorMessage = $derived(
     data?.error && data.error !== 'unauthenticated' ? data.error : null
   );
 
-  // 1-on-1 trend: only this competitor's trace on the chart alongside the
-  // user's own. Filter the wider trends payload down to one row.
-  const oneOnOneTrends = $derived(
-    competitor && trends
-      ? {
-          business: trends.business ?? [],
-          competitors: (trends.competitors ?? []).filter(
-            (/** @type {any} */ c) => c.competitor_id === competitor.id
-          )
-        }
-      : { business: [], competitors: [] }
+  // This competitor's observation series, pulled from the anchor business's
+  // /trends payload (which is where the backend persists competitor obs).
+  const competitorSeries = $derived(
+    competitor
+      ? (anchorTrends.competitors ?? []).find(
+          (/** @type {any} */ c) => c.competitor_id === competitor.id
+        ) ?? null
+      : null
   );
 
-  /** @type {'overview' | 'reviews' | 'social'} */
-  let tab = $state('overview');
+  const competitorObservations = $derived(competitorSeries?.observations ?? []);
+
   /** @type {'review_count' | 'rating' | 'instagram_followers' | 'instagram_posts'} */
   let metric = $state('review_count');
 
-  /** Toggle options for the Overview 1-on-1 chart. Mirrors the Market
-   * page so the same vocabulary is used across the workspace. */
   const metricOptions = /** @type {const} */ ([
     { key: 'review_count', label: 'Reviews' },
     { key: 'rating', label: 'Rating' },
@@ -55,31 +54,134 @@
     { key: 'instagram_posts', label: 'IG posts' }
   ]);
 
-  // Reviews tab: pull this competitor's observation stream and the user's
-  // own series, then compute simple deterministic comparisons. No LLM
-  // here — the deep dive is a raw read of the data.
-  const competitorTrend = $derived(oneOnOneTrends.competitors[0] ?? null);
-  const competitorObs = $derived(
-    /** @type {any[]} */ (competitorTrend?.observations ?? [])
-  );
-  const userObs = $derived(/** @type {any[]} */ (oneOnOneTrends.business ?? []));
+  // Compare-against picker. ``'none'`` is the default — the page is
+  // first about how *this competitor* is doing, not a forced one-on-one.
+  // A numeric id selects one of the user's businesses for overlay;
+  // ``'all'`` shows every business of the user at once.
+  /** @type {'none' | 'all' | number} */
+  let compareWith = $state('none');
 
-  /** @param {any[]} series */
-  function reviewVelocity(series) {
-    const points = series.filter((p) => p.review_count != null);
-    if (points.length < 2) return null;
-    const first = points[0];
-    const last = points[points.length - 1];
-    const firstTime = new Date(first.observed_at + 'Z').getTime();
-    const lastTime = new Date(last.observed_at + 'Z').getTime();
-    const days = (lastTime - firstTime) / (1000 * 60 * 60 * 24);
-    if (days <= 0) return null;
-    const delta = last.review_count - first.review_count;
-    return { delta, days: Math.round(days), perWeek: delta / (days / 7) };
-  }
+  const compareOptions = $derived.by(() => {
+    /** @type {Array<{ key: 'none' | 'all' | number, label: string }>} */
+    const out = [{ key: 'none', label: 'None' }];
+    for (const b of businesses) {
+      out.push({ key: b.id, label: b.name });
+    }
+    if (businesses.length > 1) {
+      out.push({ key: 'all', label: 'All my businesses' });
+    }
+    return out;
+  });
 
-  const userVelocity = $derived(reviewVelocity(userObs));
-  const compVelocity = $derived(reviewVelocity(competitorObs));
+  // Chart wiring. The TrendChart's `business` prop is the solid line;
+  // `competitors` are dashed-with-palette. When no comparison is on,
+  // the competitor takes the solid slot so the user sees one clean
+  // line. When a comparison is on, the user business is solid and the
+  // competitor (+ optional other user businesses) ride the competitors
+  // channel.
+  const chartConfig = $derived.by(() => {
+    if (!competitor) return null;
+    const compObs = competitorObservations;
+    if (compareWith === 'none') {
+      return {
+        business: compObs,
+        businessName: competitor.name,
+        competitors: []
+      };
+    }
+    if (compareWith === 'all') {
+      // First user business with any data goes solid; every other user
+      // business + this competitor go dashed.
+      const ranked = businesses
+        .map((/** @type {any} */ b) => ({
+          b,
+          obs: businessTrends[b.id]?.business ?? []
+        }))
+        .sort((a, b) => b.obs.length - a.obs.length);
+      const primary = ranked[0]?.b ?? null;
+      const secondaries = ranked.slice(1);
+      /** @type {any[]} */
+      const competitors = [];
+      for (const { b, obs } of secondaries) {
+        competitors.push({
+          competitor_id: -b.id,
+          name: b.name,
+          observations: obs
+        });
+      }
+      competitors.push({
+        competitor_id: competitor.id,
+        name: competitor.name,
+        observations: compObs
+      });
+      return {
+        business: primary ? businessTrends[primary.id]?.business ?? [] : compObs,
+        businessName: primary?.name ?? competitor.name,
+        competitors
+      };
+    }
+    const targetBusiness = businesses.find((/** @type {any} */ b) => b.id === compareWith);
+    const targetObs = targetBusiness ? businessTrends[targetBusiness.id]?.business ?? [] : [];
+    return {
+      business: targetObs,
+      businessName: targetBusiness?.name ?? 'Your business',
+      competitors: [
+        {
+          competitor_id: competitor.id,
+          name: competitor.name,
+          observations: compObs
+        }
+      ]
+    };
+  });
+
+  // Flat 2x2 metric grid — this competitor's latest values, with the
+  // currently-selected metric highlighted to tie back to the chart.
+  // ``emptyHint`` overrides the default "No reading yet" with copy
+  // that tells the user *why* it's empty (e.g. IG metrics require the
+  // user to provide the competitor's Instagram URL).
+  const metricCards = $derived([
+    {
+      key: 'rating',
+      label: 'Rating',
+      value:
+        competitor?.latest_rating != null
+          ? Number(competitor.latest_rating).toFixed(1) + ' ★'
+          : null,
+      emptyHint: null
+    },
+    {
+      key: 'review_count',
+      label: 'Reviews',
+      value:
+        competitor?.latest_review_count != null
+          ? String(competitor.latest_review_count)
+          : null,
+      emptyHint: null
+    },
+    {
+      key: 'instagram_followers',
+      label: 'IG followers',
+      value:
+        competitor?.latest_instagram_followers != null
+          ? Number(competitor.latest_instagram_followers).toLocaleString()
+          : null,
+      emptyHint: competitor?.instagram_url
+        ? "We'll pick this up on the next audit."
+        : "Add this competitor's Instagram URL so we can read it on the next audit."
+    },
+    {
+      key: 'instagram_posts',
+      label: 'IG posts',
+      value:
+        competitor?.latest_instagram_posts != null
+          ? String(competitor.latest_instagram_posts)
+          : null,
+      emptyHint: competitor?.instagram_url
+        ? "We'll pick this up on the next audit."
+        : "Add this competitor's Instagram URL so we can read it on the next audit."
+    }
+  ]);
 
   let removing = $state(false);
   let removeError = $state(/** @type {string | null} */ (null));
@@ -104,12 +206,6 @@
       await goto('/login', { replaceState: true });
     }
   });
-
-  const tabs = [
-    { key: /** @type {const} */ ('overview'), label: 'Overview' },
-    { key: /** @type {const} */ ('reviews'), label: 'Reviews' },
-    { key: /** @type {const} */ ('social'), label: 'Social' }
-  ];
 </script>
 
 <section class="space-y-6">
@@ -119,192 +215,137 @@
       <h1 class="text-2xl font-semibold tracking-tight text-canvas-ink sm:text-3xl">
         {competitor.name}
       </h1>
-      <p class="text-sm text-canvas-muted">
-        Comparing against <span class="text-canvas-ink">{business.name}</span>
-        {#if business.city} · {business.city}{/if}
-      </p>
     {/if}
   </header>
 
   {#if errorMessage}
-    <div class="card border border-action-100 bg-action-50 p-6 text-sm text-action-700">
-      <p class="font-medium">We couldn't load this competitor.</p>
+    <div
+      class="rounded-2xl border border-action-100 bg-action-50 p-6 text-sm text-action-700 shadow-soft"
+    >
+      <p class="font-semibold">We couldn't load this competitor.</p>
       <p class="mt-1 text-action-700/80">{errorMessage}</p>
       <a class="btn-ghost mt-3 inline-flex text-action-700" href="/dashboard/competitors">
         Back to hub
       </a>
     </div>
-  {:else if business && competitor}
-    <nav
-      class="-mx-4 flex gap-1 overflow-x-auto border-b border-canvas-soft px-4 sm:mx-0 sm:px-0"
-      aria-label="Competitor detail sections"
-    >
-      {#each tabs as t (t.key)}
-        {@const active = tab === t.key}
-        <button
-          type="button"
-          class={`relative -mb-px inline-flex min-h-[40px] items-center whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors duration-200 ${
-            active ? 'text-canvas-ink' : 'text-canvas-muted hover:text-canvas-ink'
-          }`}
-          aria-current={active ? 'page' : undefined}
-          onclick={() => (tab = t.key)}
-        >
-          {t.label}
-          {#if active}
-            <span class="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-healthy-500"></span>
-          {/if}
-        </button>
-      {/each}
-    </nav>
-
-    {#if tab === 'overview'}
-      <section class="space-y-4" in:fade={{ duration: 200 }}>
-        <div class="card p-4 sm:p-5">
-          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p class="text-sm font-medium text-canvas-ink">1-on-1 trend</p>
-              <p class="text-xs text-canvas-muted">
-                {business.name} vs {competitor.name}
-              </p>
-            </div>
-            <div
-              class="inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full bg-canvas-soft p-1 text-xs"
-              role="tablist"
-              aria-label="Metric"
-            >
-              {#each metricOptions as opt (opt.key)}
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={metric === opt.key}
-                  class={`min-h-[32px] whitespace-nowrap rounded-full px-3 py-1 font-medium transition-all ${
-                    metric === opt.key
-                      ? 'bg-white text-canvas-ink shadow-soft'
-                      : 'text-canvas-muted hover:text-canvas-ink'
-                  }`}
-                  onclick={() => (metric = opt.key)}
-                >
-                  {opt.label}
-                </button>
-              {/each}
-            </div>
-          </div>
-          <TrendChart
-            business={oneOnOneTrends.business}
-            competitors={oneOnOneTrends.competitors}
-            businessName={business.name}
-            {metric}
-          />
-        </div>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="card p-4">
-            <p class="text-xs uppercase tracking-wide text-canvas-muted">Latest rating</p>
-            <p class="mt-1 text-xl font-semibold text-canvas-ink">
-              {#if competitor.latest_rating != null}
-                {Number(competitor.latest_rating).toFixed(1)} ★
+  {:else if business && competitor && chartConfig}
+    <section class="space-y-4" in:fade={{ duration: 200 }}>
+      <div class="card p-4 sm:p-5">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p class="text-sm font-semibold text-canvas-ink">Trend over time</p>
+            <p class="text-xs text-canvas-muted">
+              {#if compareWith === 'none'}
+                How {competitor.name} is doing
+              {:else if compareWith === 'all'}
+                {competitor.name} vs all your businesses
               {:else}
-                <span class="text-canvas-muted text-sm font-normal">No reading yet</span>
+                {competitor.name} vs {chartConfig.businessName}
               {/if}
             </p>
-            {#if competitor.latest_observed_at}
-              <p class="mt-1 text-xs text-canvas-muted">
-                last seen {formatRelativeTime(competitor.latest_observed_at + 'Z')}
-              </p>
+          </div>
+          <div
+            class="inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full bg-canvas-soft p-1 text-xs"
+            role="tablist"
+            aria-label="Metric"
+          >
+            {#each metricOptions as opt (opt.key)}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={metric === opt.key}
+                class={`min-h-[32px] whitespace-nowrap rounded-full px-3 py-1 font-medium transition-all ${
+                  metric === opt.key
+                    ? 'bg-white text-canvas-ink shadow-soft'
+                    : 'text-canvas-muted hover:text-canvas-ink'
+                }`}
+                onclick={() => (metric = opt.key)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Compare-against picker. Default ('none') means the chart is
+             a clean look at the competitor's own numbers; the user opts
+             in to an overlay when they want one. -->
+        <div class="mb-4">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-canvas-muted">
+            Compare against
+          </p>
+          <div class="mt-1.5 flex flex-wrap gap-1.5">
+            {#each compareOptions as opt (String(opt.key))}
+              {@const active = compareWith === opt.key}
+              <button
+                type="button"
+                aria-pressed={active}
+                class={`inline-flex min-h-[32px] items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  active
+                    ? 'border-healthy-200 bg-healthy-50 text-healthy-700 shadow-sm'
+                    : 'border-canvas-soft bg-white text-canvas-muted hover:text-canvas-ink'
+                }`}
+                onclick={() => (compareWith = opt.key)}
+              >
+                {#if active}
+                  <span class="h-1.5 w-1.5 rounded-full bg-healthy-500" aria-hidden="true"></span>
+                {/if}
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <TrendChart
+          business={chartConfig.business}
+          competitors={chartConfig.competitors}
+          businessName={chartConfig.businessName}
+          {metric}
+          showLegend={compareWith !== 'none'}
+        />
+
+        <p class="mt-4 text-xs text-canvas-muted">
+          Not a live feed — each point lands when this competitor is rechecked.
+          That happens on the weekly auto-refresh, or whenever you run an audit
+          on the business that's tracking them.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {#each metricCards as card (card.key)}
+          <div
+            class={`card p-4 transition ${
+              metric === card.key
+                ? 'border-healthy-200 bg-healthy-50/40 shadow-md'
+                : ''
+            }`}
+          >
+            <p class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">
+              {card.label}
+            </p>
+            <p class="mt-2 text-xl font-semibold tracking-tight text-canvas-ink">
+              {#if card.value != null}
+                {card.value}
+              {:else}
+                <span class="text-sm font-normal text-canvas-muted">No reading yet</span>
+              {/if}
+            </p>
+            {#if card.value == null && card.emptyHint}
+              <p class="mt-1 text-xs text-canvas-muted">{card.emptyHint}</p>
             {/if}
           </div>
-          <div class="card p-4">
-            <p class="text-xs uppercase tracking-wide text-canvas-muted">Latest review count</p>
-            <p class="mt-1 text-xl font-semibold text-canvas-ink">
-              {#if competitor.latest_review_count != null}
-                {competitor.latest_review_count}
-              {:else}
-                <span class="text-canvas-muted text-sm font-normal">No reading yet</span>
-              {/if}
-            </p>
-            <p class="mt-1 text-xs text-canvas-muted">
-              {competitor.observation_count}
-              {competitor.observation_count === 1 ? 'observation' : 'observations'} on file
-            </p>
-          </div>
-        </div>
-      </section>
-    {:else if tab === 'reviews'}
-      <section class="space-y-4" in:fade={{ duration: 200 }}>
-        <div class="card p-5 text-sm text-canvas-muted">
-          <p class="text-canvas-ink font-medium">Review volume growth</p>
-          <p class="mt-1 text-xs">
-            Tracked over the {competitorObs.length}
-            {competitorObs.length === 1 ? 'observation' : 'observations'} we have on this
-            competitor so far.
-          </p>
-          <dl class="mt-4 grid gap-3 sm:grid-cols-2">
-            <div class="rounded-xl bg-canvas-soft/40 p-3">
-              <dt class="text-xs uppercase tracking-wide text-canvas-muted">{business.name}</dt>
-              {#if userVelocity}
-                <dd class="mt-1 text-sm text-canvas-ink">
-                  +{userVelocity.delta} reviews · {userVelocity.perWeek.toFixed(1)}/week
-                  <span class="text-canvas-muted">over {userVelocity.days} days</span>
-                </dd>
-              {:else}
-                <dd class="mt-1 text-sm text-canvas-muted">Not enough data yet.</dd>
-              {/if}
-            </div>
-            <div class="rounded-xl bg-canvas-soft/40 p-3">
-              <dt class="text-xs uppercase tracking-wide text-canvas-muted">
-                {competitor.name}
-              </dt>
-              {#if compVelocity}
-                <dd class="mt-1 text-sm text-canvas-ink">
-                  +{compVelocity.delta} reviews · {compVelocity.perWeek.toFixed(1)}/week
-                  <span class="text-canvas-muted">over {compVelocity.days} days</span>
-                </dd>
-              {:else}
-                <dd class="mt-1 text-sm text-canvas-muted">Not enough data yet.</dd>
-              {/if}
-            </div>
-          </dl>
-        </div>
+        {/each}
+      </div>
 
-        <div class="card p-4 sm:p-5">
-          <div class="mb-3">
-            <p class="text-sm font-medium text-canvas-ink">Review count over time</p>
-          </div>
-          <TrendChart
-            business={oneOnOneTrends.business}
-            competitors={oneOnOneTrends.competitors}
-            businessName={business.name}
-            metric="review_count"
-          />
-        </div>
-      </section>
-    {:else if tab === 'social'}
-      <section class="space-y-4" in:fade={{ duration: 200 }}>
-        <div class="card p-5">
-          <p class="text-canvas-ink font-medium">Social signals</p>
-          <p class="mt-1 text-xs text-canvas-muted">
-            Follower growth and post frequency will populate here once we have a few observations
-            from the audit pipeline. We don't pull any image data — only counts.
-          </p>
-          {#if competitor.instagram_url}
-            <p class="mt-3 text-xs text-canvas-muted">
-              Tracking from
-              <a
-                class="text-healthy-700 underline"
-                href={competitor.instagram_url}
-                target="_blank"
-                rel="noopener noreferrer">{competitor.instagram_url}</a
-              >
-            </p>
-          {:else}
-            <p class="mt-3 text-xs text-canvas-muted">
-              No Instagram URL pre-seeded. The scraper will discover it from the Maps listing on
-              the next audit.
-            </p>
-          {/if}
-        </div>
-      </section>
-    {/if}
+      <p class="text-xs text-canvas-muted">
+        {competitor.observation_count}
+        {competitor.observation_count === 1 ? 'observation' : 'observations'} on file
+        {#if competitor.latest_observed_at}
+          · last seen {formatRelativeTime(competitor.latest_observed_at + 'Z')}
+        {/if}
+        · Updated when you run an audit, not live.
+      </p>
+    </section>
 
     <div class="flex flex-wrap items-center gap-2 pt-2">
       <a class="btn-ghost" href="/dashboard/competitors">← Back to hub</a>

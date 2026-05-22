@@ -41,8 +41,19 @@ from app.models.enums import AuditSectionName, AuditStatus
 logger = logging.getLogger(__name__)
 
 
-InsightKind = Literal["winning", "opportunity"]
+InsightKind = Literal["winning", "opportunity", "matched"]
 MetricName = Literal["rating", "review_count"]
+
+# A delta smaller than this on the user-facing scale counts as "matched"
+# rather than "winning" / "opportunity". Without this gate, a 4.3 user
+# rating against a 4.3 competitor average produced the nonsense card
+# "Your rating (4.3★) is currently below the 3 competitors … who
+# average 4.3★." Pick thresholds at the precision the UI actually
+# renders so the copy never disagrees with the visible numbers.
+_MATCHED_THRESHOLDS: dict[MetricName, float] = {
+    "rating": 0.05,  # ratings render to one decimal place
+    "review_count": 1.0,  # review counts render as whole integers
+}
 
 
 @dataclass(frozen=True)
@@ -165,10 +176,13 @@ def _facts_for(
             continue
         avg = sum(comp_values) / len(comp_values)
         delta = float(user_value) - avg
-        # ``kind`` is just the sign of delta. Zero deltas are treated as
-        # "opportunity" so the user sees something actionable rather than a
-        # tie that reads as "you're winning by 0".
-        kind: InsightKind = "winning" if delta > 0 else "opportunity"
+        threshold = _MATCHED_THRESHOLDS[metric]
+        if abs(delta) < threshold:
+            kind: InsightKind = "matched"
+        elif delta > 0:
+            kind = "winning"
+        else:
+            kind = "opportunity"
         facts.append(
             InsightFact(
                 kind=kind,
@@ -203,6 +217,12 @@ def _deterministic_sentence(fact: InsightFact) -> str:
         return (
             f"Your {metric_label} ({user_str}) is sitting above the {sample} "
             f"{competitor_word} you're tracking, who average {comp_str}."
+        )
+    if fact.kind == "matched":
+        return (
+            f"Your {metric_label} ({user_str}) is right in line with the "
+            f"{sample} {competitor_word} you're tracking, who also average "
+            f"{comp_str}."
         )
     return (
         f"Your {metric_label} ({user_str}) is currently below the {sample} "
@@ -239,10 +259,17 @@ def _llm_sentence(fact: InsightFact, business_name: str) -> str | None:
         "NOT speculate about causes. Do NOT recommend actions. Do NOT use "
         "superlatives like 'crushing it' or 'dominating'. Reference the "
         "business by name. If the user is ahead, frame it neutrally; if "
-        "behind, frame it as room to grow rather than a problem."
+        "behind, frame it as room to grow rather than a problem; if the "
+        "deltas are essentially zero, say the user is matching the "
+        "competition."
     )
 
-    direction = "ahead of" if fact.kind == "winning" else "behind"
+    if fact.kind == "winning":
+        direction = "ahead of"
+    elif fact.kind == "matched":
+        direction = "tracking right alongside"
+    else:
+        direction = "behind"
     user_msg = (
         f"Business name: {business_name}\n"
         f"Metric: {_METRIC_LABELS[fact.metric]}\n"
@@ -280,6 +307,8 @@ def _headline(fact: InsightFact) -> str:
     metric_label = "rating" if fact.metric == "rating" else "review count"
     if fact.kind == "winning":
         return f"Top winning factor · {metric_label}"
+    if fact.kind == "matched":
+        return f"Matching the market · {metric_label}"
     return f"Biggest opportunity · {metric_label}"
 
 
@@ -318,12 +347,18 @@ def build_hub_insights(
 
     winning = [f for f in facts if f.kind == "winning"]
     opportunity = [f for f in facts if f.kind == "opportunity"]
+    matched = [f for f in facts if f.kind == "matched"]
 
     picked: list[InsightFact] = []
     if winning:
         picked.append(max(winning, key=lambda f: f.delta))
     if opportunity:
         picked.append(min(opportunity, key=lambda f: f.delta))
+    # Fall back to a "matched" fact when neither side has anything to
+    # surface — otherwise the user sees an empty insights pane even
+    # though we have observations from both them and their competitors.
+    if not picked and matched:
+        picked.append(matched[0])
 
     cards: list[InsightCard] = []
     for fact in picked:

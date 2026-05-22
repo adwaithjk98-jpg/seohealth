@@ -14,11 +14,20 @@ Why a separate process from ``run_worker``? Two reasons:
 Run from ``backend/``:
     .venv/bin/python -m scripts.run_competitor_worker
 """
+import os
+import sys
+
+if sys.platform == "darwin":
+    os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 import logging
 
-from rq import Worker
+from rq import SimpleWorker, Worker
 
 from app.workers.queue import competitor_queue, redis_conn
+
+# See run_worker.py for why macOS uses SimpleWorker.
+_WorkerCls = SimpleWorker if sys.platform == "darwin" else Worker
 
 
 def main() -> None:
@@ -26,7 +35,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    worker = Worker([competitor_queue], connection=redis_conn)
+    worker = _WorkerCls([competitor_queue], connection=redis_conn)
     worker.work(with_scheduler=False)
 
 

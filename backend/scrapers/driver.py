@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -71,16 +72,19 @@ def _build_options() -> Options:
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
 
-    # Block heavy media (images, stylesheets, fonts) at the content-settings
-    # layer. The DOM is unaffected — <img src="…"> tags still render in the
-    # page source, so scrapers that *count* images on Google Maps work fine,
-    # we just never download the JPG/PNG bytes. Saves substantial proxy
-    # bandwidth on every audit run.
+    # Block images + fonts at the content-settings layer to trim bandwidth.
+    # The DOM is unaffected — <img src="…"> tags still render in the page
+    # source, so scrapers that *count* images on Google Maps work fine, we
+    # just never download the JPG/PNG bytes.
+    #
+    # Stylesheets are NOT blocked: Google Maps' review-count sibling span
+    # inside ``div.F7nice`` only paints in the DOM when CSS-driven layout
+    # passes through — blocking stylesheets caused ``review_count`` to come
+    # back ``None`` on every audit even though the rating extracted cleanly.
     opts.add_experimental_option(
         "prefs",
         {
             "profile.managed_default_content_settings.images": 2,
-            "profile.managed_default_content_settings.stylesheets": 2,
             "profile.managed_default_content_settings.fonts": 2,
         },
     )
@@ -91,7 +95,101 @@ def _build_options() -> Options:
     return opts
 
 
+def _use_undetected_driver() -> bool:
+    """True when we should drive Chrome through undetected-chromedriver.
+
+    Default OFF. Google Maps strips the review-count DOM for vanilla
+    Selenium AND for stock undetected-chromedriver (tested headless +
+    visible). The dep is wired in here for future stealth work — bring
+    a persistent profile, additional fingerprint patches, or pair with
+    a residential-IP proxy — but it doesn't solve the problem on its
+    own, so leaving it ON by default just trades vanilla Selenium for
+    a heavier driver with no review-count win.
+
+    Flip ``USE_UNDETECTED_CHROMEDRIVER=true`` when iterating on a real
+    bypass.
+    """
+    return os.getenv("USE_UNDETECTED_CHROMEDRIVER", "false").lower() == "true"
+
+
+def _local_chrome_major_version() -> int | None:
+    """Best-effort: read the installed Chrome's major version.
+
+    undetected-chromedriver downloads a chromedriver matched to a fixed
+    Chrome version unless we hand it ``version_main``. Without this,
+    ``uc.Chrome()`` raises "this version of ChromeDriver only supports
+    Chrome version N" whenever the system Chrome is a release behind
+    the bundled driver. Returning None lets the caller fall through to
+    UC's default (and surface a clear error if it really doesn't match).
+    """
+    import re
+    import subprocess
+
+    candidates = [
+        os.getenv("CHROME_BINARY"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/opt/google/chrome/chrome",
+    ]
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            out = subprocess.check_output([path, "--version"], timeout=5)
+            m = re.search(r"\b(\d+)\.", out.decode("utf-8", "ignore"))
+            if m:
+                return int(m.group(1))
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
+def _build_undetected_driver() -> WebDriver:
+    # Lazy import — the dependency is only loaded when the flag is on,
+    # so devs running other parts of the backend don't pay for it.
+    import undetected_chromedriver as uc
+
+    uc_opts = uc.ChromeOptions()
+    # Mirror the same flags as the vanilla path so the rest of the
+    # scraper sees an identical Chrome environment (window size,
+    # locale, bandwidth-saving content-settings, etc.).
+    uc_opts.add_argument("--no-sandbox")
+    uc_opts.add_argument("--disable-dev-shm-usage")
+    uc_opts.add_argument("--disable-gpu")
+    uc_opts.add_argument("--window-size=1366,900")
+    uc_opts.add_argument("--lang=en-US,en")
+    uc_opts.add_argument(f"--user-agent={DEFAULT_USER_AGENT}")
+    uc_opts.add_experimental_option(
+        "prefs",
+        {
+            "profile.managed_default_content_settings.images": 2,
+            "profile.managed_default_content_settings.fonts": 2,
+        },
+    )
+    chrome_binary = os.getenv("CHROME_BINARY")
+    if chrome_binary:
+        uc_opts.binary_location = chrome_binary
+    return uc.Chrome(
+        options=uc_opts,
+        headless=True,
+        use_subprocess=True,
+        version_main=_local_chrome_major_version(),
+    )
+
+
 def _build_driver() -> WebDriver:
+    if _use_undetected_driver():
+        try:
+            driver = _build_undetected_driver()
+        except Exception as exc:
+            raise DriverUnavailable(
+                f"could not start undetected Chrome: {exc}"
+            ) from exc
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_S)
+        driver.set_script_timeout(SCRIPT_TIMEOUT_S)
+        return driver
+
     options = _build_options()
     chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
     try:
@@ -104,6 +202,24 @@ def _build_driver() -> WebDriver:
 
     driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_S)
     driver.set_script_timeout(SCRIPT_TIMEOUT_S)
+
+    # Vanilla Selenium fallback — also try the soft navigator.webdriver
+    # bypass so even the fallback path has a fighting chance.
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": (
+                    "Object.defineProperty(navigator, 'webdriver', "
+                    "{get: () => undefined});"
+                    "Object.defineProperty(navigator, 'languages', "
+                    "{get: () => ['en-US', 'en']});"
+                )
+            },
+        )
+    except WebDriverException:
+        pass
+
     return driver
 
 

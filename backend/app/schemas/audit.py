@@ -77,3 +77,18 @@ class AuditDetailResponse(BaseModel):
 
 class RecommendationUpdateRequest(BaseModel):
     fix_status: str = Field(..., pattern="^(open|done|dismissed)$")
+
+
+class AuditQuotaResponse(BaseModel):
+    """Manual + scheduled audits the user has started in the rolling 7-day window.
+
+    The frontend Audit tab reads this for the "X of Y this week" counter
+    and disables the Run-audit CTA when ``used >= limit``. ``period_end``
+    is naive-UTC so the existing ``${iso}Z`` parsing path keeps working.
+    """
+
+    used: int
+    limit: int
+    remaining: int
+    period_end: datetime
+    tier: str
