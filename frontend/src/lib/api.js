@@ -102,6 +102,20 @@ export async function deleteCompetitor(businessId, competitorId) {
   if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
 }
 
+/**
+ * Soft-archive one of the user's own businesses. The row stays in the
+ * DB (audit history + competitor observations survive) but drops out
+ * of the dashboard and the per-plan business cap.
+ * @param {number} businessId
+ */
+export async function archiveBusiness(businessId) {
+  const res = await fetch(`/api/businesses/${businessId}`, {
+    method: 'DELETE',
+    credentials: 'same-origin'
+  });
+  if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
+}
+
 export async function getBusinessTrends(businessId) {
   const res = await fetch(`/api/businesses/${businessId}/trends`, {
     credentials: 'same-origin'
@@ -151,6 +165,21 @@ export async function createDiscoveryScan(payload) {
 /** @param {number} scanId */
 export async function getDiscoveryScan(scanId) {
   const res = await fetch(`/api/discovery-scans/${scanId}`, {
+    credentials: 'same-origin'
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
+/**
+ * List prior done scans for the caller. Optional business filter scopes
+ * the result to one anchor business. Used by the Add-competitors gateway
+ * to prefer revisiting an earlier list over burning a fresh scan.
+ * @param {{ business_id?: number } | undefined} opts
+ */
+export async function listDiscoveryScans(opts) {
+  const qs = opts?.business_id ? `?business_id=${opts.business_id}` : '';
+  const res = await fetch(`/api/discovery-scans${qs}`, {
     credentials: 'same-origin'
   });
   if (!res.ok) throw new Error(await readJsonError(res));

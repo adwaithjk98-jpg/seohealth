@@ -18,11 +18,13 @@ The actual scrape runs in the background on the low-priority
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.auth_deps import current_user
 from app.db import get_db
 from app.models import Business, DiscoveryScan, User
+from app.models.enums import DiscoveryScanStatus
 from app.schemas.discovery_scan import (
     DiscoveryScanCreateRequest,
     DiscoveryScanResponse,
@@ -98,6 +100,35 @@ def create_discovery_scan(
         )
 
     return DiscoveryScanResponse(**discovery_service.scan_to_dict(scan))
+
+
+@router.get(
+    "/discovery-scans",
+    response_model=list[DiscoveryScanResponse],
+)
+def list_discovery_scans(
+    business_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[DiscoveryScanResponse]:
+    """List the caller's prior discovery scans, most recent first.
+
+    Used by the "Add competitors" gateway to decide whether to offer
+    revisiting an earlier scan (preferred — zero scraper cost) vs.
+    forcing a new one. Optional ``business_id`` filter scopes the
+    list to scans anchored to one of the user's businesses.
+
+    Only ``done`` scans are returned. A ``pending`` or ``failed`` row
+    has nothing to revisit and would just confuse the gateway.
+    """
+    q = db.query(DiscoveryScan).filter(
+        DiscoveryScan.user_id == user.id,
+        DiscoveryScan.status == DiscoveryScanStatus.done,
+    )
+    if business_id is not None:
+        q = q.filter(DiscoveryScan.business_id == business_id)
+    rows = q.order_by(desc(DiscoveryScan.finished_at)).limit(20).all()
+    return [DiscoveryScanResponse(**discovery_service.scan_to_dict(s)) for s in rows]
 
 
 @router.get(

@@ -20,9 +20,13 @@ Design notes
   are log-scaled because doubling from 50→100 reviews matters more than
   doubling from 5000→10000.
 
-* Missing inputs are dropped — the remaining weights are renormalised
-  so an entity with only a rating still gets a fair score from that
-  single signal. Returns ``None`` only when *every* input is missing.
+* Missing inputs are dropped and the remaining weights are renormalised,
+  but only as long as **at least two** of the three signals are present.
+  Renormalising on a single signal made a business with just a 5★ rating
+  read as "100 (1st)" on the matrix even when reviews + IG were
+  completely unknown — that's overconfident. With ``< 2`` signals we
+  return ``None`` (the matrix renders that as "—"), so the ranking
+  reflects breadth of evidence, not just one lucky number.
 """
 
 from __future__ import annotations
@@ -87,7 +91,10 @@ def compute(
                 _WEIGHT_IG_FOLLOWERS,
             )
         )
-    if not components:
+    # Require at least two of {rating, reviews, ig_followers}. A single
+    # signal renormalised to 100% weight made entities with only a
+    # rating look like a perfect score — see module docstring.
+    if len(components) < 2:
         return None
     total_weight = sum(w for _, w in components)
     if total_weight <= 0:

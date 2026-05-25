@@ -6,7 +6,7 @@
   import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
-  import { getLatestAuditForBusiness, startAudit } from '$lib/api.js';
+  import { getLatestAuditForBusiness, startAudit, archiveBusiness } from '$lib/api.js';
   import {
     scoreEncouragement,
     severityLabel,
@@ -66,6 +66,38 @@
   const subState = $derived(authState.user?.subscription_state ?? null);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
   const competitorLimit = $derived(subState?.limits?.competitors ?? 0);
+
+  let archiving = $state(false);
+  let archiveError = $state(/** @type {string | null} */ (null));
+  let confirmingArchive = $state(false);
+
+  async function handleArchive() {
+    if (!audit?.business?.id || archiving) return;
+    archiving = true;
+    archiveError = null;
+    try {
+      await archiveBusiness(audit.business.id);
+      await goto('/dashboard', { replaceState: true });
+    } catch (err) {
+      archiveError = err instanceof Error ? err.message : 'Could not archive this business.';
+      archiving = false;
+    }
+  }
+
+  /** Same one-shot archive flow but for the empty-state ``no_audit`` page,
+   *  where ``audit`` is null so we read the id off the route directly. */
+  async function handleArchiveById(id) {
+    if (!id || archiving) return;
+    archiving = true;
+    archiveError = null;
+    try {
+      await archiveBusiness(id);
+      await goto('/dashboard', { replaceState: true });
+    } catch (err) {
+      archiveError = err instanceof Error ? err.message : 'Could not archive this business.';
+      archiving = false;
+    }
+  }
 
   async function handleReaudit() {
     if (!audit?.business?.id || reauditing) return;
@@ -143,6 +175,17 @@
         <a class="btn-primary" href="/">Run a health check</a>
         <a class="btn-ghost" href="/dashboard">Back to dashboard</a>
       </div>
+      <button
+        type="button"
+        class="mt-4 text-xs text-canvas-muted hover:text-action-700"
+        onclick={() => handleArchiveById(businessId)}
+        disabled={archiving}
+      >
+        {archiving ? 'Archiving…' : 'Archive this business instead'}
+      </button>
+      {#if archiveError}
+        <p class="mt-3 text-xs text-action-700">{archiveError}</p>
+      {/if}
     </div>
   </section>
 {:else if status === 'error'}
@@ -323,7 +366,48 @@
             ↻ Re-audit now
           {/if}
         </button>
+        {#if confirmingArchive}
+          <div
+            class="flex flex-wrap items-center gap-2 text-xs"
+            in:fly={{ y: 4, duration: 180, easing: quintOut }}
+          >
+            <span class="text-canvas-muted">Archive this business?</span>
+            <button
+              type="button"
+              class="rounded-full bg-action-100 px-3 py-1 font-medium text-action-700 hover:bg-action-200"
+              onclick={handleArchive}
+              disabled={archiving}
+            >
+              {archiving ? 'Archiving…' : 'Yes, archive'}
+            </button>
+            <button
+              type="button"
+              class="rounded-full px-3 py-1 text-canvas-muted hover:text-canvas-ink"
+              onclick={() => (confirmingArchive = false)}
+              disabled={archiving}
+            >
+              Cancel
+            </button>
+          </div>
+        {:else}
+          <button
+            type="button"
+            class="text-xs text-canvas-muted hover:text-action-700 sm:ml-auto"
+            onclick={() => (confirmingArchive = true)}
+          >
+            Archive this business
+          </button>
+        {/if}
       </div>
+      {#if archiveError}
+        <p
+          class="mt-3 rounded-2xl border border-action-100 bg-action-50/80 px-3 py-2 text-xs text-action-700"
+          in:fly={{ y: 4, duration: 220, easing: quintOut }}
+          role="alert"
+        >
+          {archiveError}
+        </p>
+      {/if}
     </footer>
   </section>
 {/if}

@@ -25,7 +25,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db import SessionLocal
-from app.models import DiscoveryScan
+from app.models import Business, Competitor, DiscoveryScan
 from app.models.enums import DiscoveryScanStatus
 from app.services.competitor_cache import upsert_metric_cache
 from app.services.competitor_scraper_adapter import (
@@ -65,6 +65,57 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
         }
     finally:
         db.close()
+
+
+def _norm_name(value: str | None) -> str:
+    """Collapse whitespace + lowercase for fuzzy name matching."""
+    if not value:
+        return ""
+    return " ".join(value.split()).lower()
+
+
+def _filter_out_own_roster(
+    db, user_id: int, leads: list[dict]
+) -> list[dict]:
+    """Drop leads that match the user's own businesses or tracked competitors.
+
+    Discovery was happily returning the user's own anchor business as the
+    #1 "similar" result — and would do the same with already-tracked
+    competitors. Neither is useful. We dedupe on two signals so the
+    scraper's variable naming/URL formats don't slip through:
+
+    * ``maps_url`` exact match (after the scraper's own dedup wouldn't
+      catch these — the user's row may have a different URL shape).
+    * ``name`` normalised (whitespace-collapsed lowercase) match.
+
+    Matching against archived rows on purpose: a user who archived a
+    competitor and re-ran discovery probably doesn't want to see them
+    pop back up as a "fresh" suggestion.
+    """
+    blocked_urls: set[str] = set()
+    blocked_names: set[str] = set()
+    for biz in db.query(Business).filter(Business.user_id == user_id).all():
+        if biz.maps_url:
+            blocked_urls.add(biz.maps_url)
+        blocked_names.add(_norm_name(biz.name))
+    business_ids = [b.id for b in db.query(Business).filter(Business.user_id == user_id).all()]
+    if business_ids:
+        for comp in (
+            db.query(Competitor).filter(Competitor.business_id.in_(business_ids)).all()
+        ):
+            if comp.maps_url:
+                blocked_urls.add(comp.maps_url)
+            blocked_names.add(_norm_name(comp.name))
+    blocked_names.discard("")
+
+    kept: list[dict] = []
+    for lead in leads:
+        if lead.get("maps_url") and lead["maps_url"] in blocked_urls:
+            continue
+        if _norm_name(lead.get("name")) in blocked_names:
+            continue
+        kept.append(lead)
+    return kept
 
 
 def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
@@ -112,16 +163,18 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
             db.commit()
             raise
 
+        filtered = _filter_out_own_roster(db, scan.user_id, result.results)
         scan.status = DiscoveryScanStatus.done
         scan.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        scan.result_count = len(result.results)
-        scan.results_json = result.results
+        scan.result_count = len(filtered)
+        scan.results_json = filtered
         db.commit()
 
         return {
             "scan_id": scan_id,
             "status": "done",
-            "result_count": len(result.results),
+            "result_count": len(filtered),
+            "dropped_self": len(result.results) - len(filtered),
         }
     except Exception:
         # Catch-all: ensure no row stays at ``running`` if anything unusual

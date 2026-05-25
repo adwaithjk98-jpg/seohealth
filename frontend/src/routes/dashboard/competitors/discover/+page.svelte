@@ -9,7 +9,8 @@
   import {
     addCompetitor,
     createDiscoveryScan,
-    getDiscoveryScan
+    getDiscoveryScan,
+    listDiscoveryScans
   } from '$lib/api.js';
   import ManualAddCompetitorModal from '$lib/components/ManualAddCompetitorModal.svelte';
 
@@ -52,6 +53,27 @@
   // Scan polling ----------------------------------------------------------
   const scanIdParam = $derived($page.url.searchParams.get('scan_id'));
   const scanId = $derived(scanIdParam ? Number(scanIdParam) : null);
+
+  // Gateway state — when ``scan_id`` is missing and the user has a prior
+  // done scan for their selected anchor, we show the three-option
+  // gateway (Revisit / Manual / Force New) instead of dropping straight
+  // into a new-scan form. Pressing "Force New Scan" appends ``?new=1``
+  // and suppresses the gateway.
+  const forceNew = $derived($page.url.searchParams.get('new') === '1');
+  /** @type {any[]} */
+  let priorScans = $state([]);
+  let priorScansLoading = $state(true);
+  /** Latest done scan for the currently-selected anchor business, or null. */
+  const latestPriorScan = $derived(
+    selectedBusinessId == null
+      ? null
+      : priorScans.find(
+          (/** @type {any} */ s) => s.business_id === selectedBusinessId
+        ) ?? null
+  );
+  const showGateway = $derived(
+    scanId == null && !forceNew && latestPriorScan != null
+  );
 
   /** @type {any | null} */
   let scan = $state(null);
@@ -403,6 +425,16 @@
     if (!authState.loaded) await loadCurrentUser();
     if (!authState.user || data?.error === 'unauthenticated') {
       await goto('/login', { replaceState: true });
+      return;
+    }
+    try {
+      priorScans = await listDiscoveryScans();
+    } catch (err) {
+      // Non-fatal — the gateway just won't appear; the user gets the
+      // scan form. Surface in a debug log for triage rather than the UI.
+      console.warn('listDiscoveryScans failed', err);
+    } finally {
+      priorScansLoading = false;
     }
   });
 </script>
@@ -442,6 +474,68 @@
         Discovery is anchored to a business you own — that's how we know which area to scan.
       </p>
       <a class="btn-primary w-full sm:w-auto" href="/">Add a business</a>
+    </div>
+  {:else if showGateway}
+    <!-- Gateway: prefer revisiting an earlier list over burning a new
+         scan. The revisit CTA is the visual primary; Force New Scan is
+         deliberately muted so the user only burns a quota slot when
+         the existing list really is exhausted. -->
+    <div class="space-y-4">
+      <a
+        href={`/dashboard/competitors/discover?scan_id=${latestPriorScan.id}`}
+        class="card group flex flex-col gap-3 border border-healthy-200 bg-gradient-to-br from-healthy-50/70 to-white p-6 transition hover:-translate-y-0.5 hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
+        in:fly={{ y: 6, duration: 220, easing: quintOut }}
+      >
+        <div class="space-y-1">
+          <p class="text-xs font-semibold uppercase tracking-wide text-healthy-700">
+            Revisit your earlier list
+          </p>
+          <p class="text-base font-semibold text-canvas-ink">
+            {latestPriorScan.result_count}
+            {latestPriorScan.result_count === 1 ? 'business' : 'businesses'} we already
+            found for you
+          </p>
+          <p class="text-xs text-canvas-muted">
+            From your last scan — pick up where you left off without re-running the
+            scraper.
+          </p>
+        </div>
+        <span class="text-2xl text-healthy-600 sm:ml-4">→</span>
+      </a>
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          class="card flex flex-col items-start gap-1 p-5 text-left transition hover:border-canvas-ink/10 hover:shadow-sm"
+          onclick={openManualAdd}
+        >
+          <p class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">
+            Add manually
+          </p>
+          <p class="text-sm font-medium text-canvas-ink">
+            Paste a Google Maps URL
+          </p>
+          <p class="text-xs text-canvas-muted">
+            Fast path when you already know who to track.
+          </p>
+        </button>
+
+        <a
+          href="/dashboard/competitors/discover?new=1"
+          class="card flex flex-col items-start gap-1 border-dashed border-canvas-soft bg-canvas-soft/30 p-5 text-left text-canvas-muted transition hover:bg-canvas-soft/60 hover:text-canvas-ink"
+        >
+          <p class="text-xs font-semibold uppercase tracking-wide">
+            Force new scan
+          </p>
+          <p class="text-sm font-medium">
+            Run the scraper from scratch
+          </p>
+          <p class="text-xs">
+            Uses one of your monthly scan slots. Most of the list will likely
+            overlap with what we already found.
+          </p>
+        </a>
+      </div>
     </div>
   {:else if scanId == null}
     <!-- Form: pick anchor + query, then kick off the async scan. -->

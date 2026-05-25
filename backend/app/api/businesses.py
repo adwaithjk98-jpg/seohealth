@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
@@ -191,3 +193,32 @@ def list_businesses(
         .all()
     )
     return [_to_response(db, b, user) for b in rows]
+
+
+@router.delete(
+    "/businesses/{business_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def archive_business(
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Response:
+    """Soft-archive one of the user's businesses.
+
+    Mirrors the competitor archive shape: sets ``archived_at`` rather
+    than deleting, so audit history + competitor observations survive
+    in case the user wants their data later. The dashboard query
+    already filters on ``archived_at IS NULL``, so the row drops out
+    of every list-view but stays addressable via direct id (useful
+    for support / re-activation paths). Re-adding the same business
+    later goes through ``create_business`` which already short-
+    circuits via ``_find_existing_business``.
+    """
+    biz = db.get(Business, business_id)
+    if biz is None or biz.user_id != user.id:
+        raise HTTPException(status_code=404, detail="business not found")
+    if biz.archived_at is None:
+        biz.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

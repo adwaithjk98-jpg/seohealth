@@ -227,6 +227,19 @@
         (c.observations ?? []).some((/** @type {any} */ p) => p[metric] != null)
       )
   );
+
+  /** Empty-state copy that names the metric we're actually waiting on,
+   * not always "rating". Switching the tab to IG followers and seeing
+   * "after your next audit captures rating data" reads broken. */
+  const emptyMetricLabel = $derived(
+    metric === 'rating'
+      ? 'rating'
+      : metric === 'review_count'
+        ? 'review-count'
+        : metric === 'instagram_followers'
+          ? 'Instagram-follower'
+          : 'Instagram-post'
+  );
 </script>
 
 <div class="relative h-72 w-full sm:h-80">
@@ -245,7 +258,7 @@
     </div>
   {:else if !hasAnyPoint}
     <div class="absolute inset-x-0 bottom-6 text-center text-xs text-canvas-muted">
-      We'll start drawing your line after your next audit captures rating data.
+      We'll start drawing your line after your next audit captures {emptyMetricLabel} data.
     </div>
   {/if}
 </div>

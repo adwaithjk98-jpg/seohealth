@@ -89,6 +89,40 @@ def _audit_maps_sync(
             pass  # let the parser try anyway; it'll mark a partial result
 
         detect_captcha(driver)
+
+        # Hop-twice trick: when the URL we land on resolves to a
+        # ``/maps/place/...`` (either because Google auto-redirected a
+        # name+city search to a single match, or because we clicked
+        # into the first result below), navigating to that resolved
+        # URL *fresh* makes Google paint the full F7nice DOM
+        # including the ``(N reviews)`` span. The same URL, when
+        # reached via a drill-in from a search results page, comes
+        # back with the review-count sibling stripped — verified
+        # repeatable headless. One extra ``driver.get()`` costs ~1s
+        # and gets us the count for free.
+        try:
+            # The h1 wait above fires before Google's JS replaces the
+            # URL with the resolved ``/maps/place/...``. Give it a brief
+            # explicit wait so we don't read a stale ``current_url``.
+            try:
+                WebDriverWait(driver, 4).until(
+                    lambda d: "/maps/place/" in d.current_url
+                )
+            except TimeoutException:
+                pass
+            here = driver.current_url
+            if "/maps/place/" in here and here != target_url:
+                driver.get(here)
+                try:
+                    WebDriverWait(driver, PANEL_WAIT_S).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                    )
+                except TimeoutException:
+                    pass
+                detect_captcha(driver)
+        except WebDriverException:
+            pass
+
         _emit(progress, "reading_listing")
         raw = _extract_panel(driver)
 
@@ -100,6 +134,28 @@ def _audit_maps_sync(
             if _click_first_search_result(driver):
                 _emit(progress, "drilled_into_first_result")
                 detect_captcha(driver)
+                # Same hop-twice trick on the drilled path — the click
+                # navigates to a place URL but inherits the search-
+                # session fingerprint that strips the count.
+                try:
+                    try:
+                        WebDriverWait(driver, 4).until(
+                            lambda d: "/maps/place/" in d.current_url
+                        )
+                    except TimeoutException:
+                        pass
+                    here = driver.current_url
+                    if "/maps/place/" in here:
+                        driver.get(here)
+                        try:
+                            WebDriverWait(driver, PANEL_WAIT_S).until(
+                                EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                            )
+                        except TimeoutException:
+                            pass
+                        detect_captcha(driver)
+                except WebDriverException:
+                    pass
                 raw = _extract_panel(driver)
 
     if not raw.get("found"):
@@ -785,6 +841,32 @@ def _scrape_one_competitor(
             EC.presence_of_element_located((By.TAG_NAME, "h1"))
         )
     except TimeoutException:
+        pass
+
+    # Hop-twice: same trick as ``_audit_maps_sync``. When the user
+    # manually supplied a ``/maps/search/...`` URL (slow-path competitor
+    # add), Google resolves it to a ``/maps/place/...`` page but strips
+    # the review-count span on that resolution. Re-navigating to the
+    # resolved URL fresh restores the full DOM. The h1-wait above fires
+    # before Google's JS replaces the URL, so we wait briefly for the
+    # transition before reading ``current_url``.
+    try:
+        try:
+            WebDriverWait(driver, 4).until(
+                lambda d: "/maps/place/" in d.current_url
+            )
+        except TimeoutException:
+            pass
+        here = driver.current_url
+        if "/maps/place/" in here and here != maps_url:
+            driver.get(here)
+            try:
+                WebDriverWait(driver, PANEL_WAIT_S).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                )
+            except TimeoutException:
+                pass
+    except WebDriverException:
         pass
 
     try:
