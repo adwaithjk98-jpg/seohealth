@@ -25,8 +25,14 @@
 
     try {
       await verifyMagicLink(token);
-      // Replace history so the back button doesn't bounce back to a now-used token.
-      await goto('/dashboard', { replaceState: true });
+      // Use a full reload (not SvelteKit's client-side ``goto``) so the
+      // dashboard's ``+page.js`` loader re-runs fresh and includes the
+      // session cookie we just set. Client-side navigation reused a
+      // cached loader result that pre-dated the cookie, which 401-ed
+      // and bounced the user back to /login (a "logs in, then logs
+      // out a second later" flicker on slower networks and on the
+      // first sign-in over Cloudflare Tunnel).
+      window.location.replace('/dashboard');
     } catch (err) {
       status = 'failed';
       errorMessage =

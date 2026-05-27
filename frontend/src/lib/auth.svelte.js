@@ -38,6 +38,7 @@ import { goto } from '$app/navigation';
  * @property {number} id
  * @property {string} email
  * @property {string} plan
+ * @property {string | null} display_name
  * @property {SubscriptionState | null} subscription_state
  */
 
@@ -138,6 +139,34 @@ export async function verifyMagicLink(token) {
   authState.user = user;
   authState.loaded = true;
   return user;
+}
+
+/**
+ * Update the signed-in user's profile. Today only ``display_name`` is
+ * editable. Pass an empty string to clear the name (frontend will fall
+ * back to the email-prefix).
+ * @param {{ display_name?: string | null }} patch
+ */
+export async function updateCurrentUser(patch) {
+  const res = await fetch('/api/auth/me', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(patch)
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  const user = await res.json();
+  authState.user = user;
+  return user;
+}
+
+/** Friendly greeting label. Falls back to the local-part of the email
+ *  (everything before the ``@``) when ``display_name`` is unset. */
+export function greetingName(user) {
+  if (!user) return '';
+  if (user.display_name && user.display_name.trim()) return user.display_name.trim();
+  const at = user.email.indexOf('@');
+  return at > 0 ? user.email.slice(0, at) : user.email;
 }
 
 export async function logout() {

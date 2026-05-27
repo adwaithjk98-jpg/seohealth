@@ -65,9 +65,15 @@
         <p class="text-xs text-canvas-muted">{section.tagline}</p>
       </div>
     </div>
-    <span class={`rounded-full px-2 py-0.5 text-xs font-medium ${accentBg}`}>
-      {section.grade}
-    </span>
+    <!-- Letter-grade chip removed (2026-05-27). The score + descriptor
+         pair below carries the same signal without the F-grade
+         emotional spike on first audit; ``accentBg`` lives on in the
+         hairline border at the bottom of the card to keep the colour
+         language consistent. -->
+    <span
+      class={`h-2 w-2 shrink-0 rounded-full ${accentBg}`}
+      aria-hidden="true"
+    ></span>
   </div>
 
   <div class="flex items-end justify-between">

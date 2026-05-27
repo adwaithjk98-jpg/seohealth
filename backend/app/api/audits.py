@@ -101,28 +101,30 @@ def create_audit(
     if business is None or not _user_owns_business(business, user):
         raise HTTPException(status_code=404, detail="business not found")
 
-    # Phase 4.7 — manual audits respect the weekly tier quota. Auto-
-    # scheduled audits (trigger='scheduled') bypass the gate because
-    # those run on the backend's cron, not user input. Without this,
-    # the Audit tab's counter would be a hint with no teeth.
-    if payload.trigger != AuditTrigger.scheduled.value:
-        weekly_limit = subs_service.TIER_LIMITS[user.plan]["audits_per_week"]
-        used, next_reset = _audit_usage_this_week(db, user.id)
-        if used >= weekly_limit:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
-                    "code": "audit_weekly_limit",
-                    "message": (
-                        f"You've used your {weekly_limit} audit"
-                        f"{'s' if weekly_limit != 1 else ''} for this week."
-                    ),
-                    "tier": user.plan.value,
-                    "limit": weekly_limit,
-                    "used": used,
-                    "next_reset_at": next_reset.isoformat(),
-                },
-            )
+    # Weekly quota applies to ALL audits — manual + scheduled —
+    # since 2026-05-26. The old bypass for ``trigger='scheduled'`` was
+    # built when auto-audits were free / automatic; under the opt-in
+    # model the user explicitly chose to schedule the business, so each
+    # auto-fire is just as much "the user spending a slot" as a manual
+    # click is. The dispatcher itself also pre-checks the quota and
+    # skips when full, so this gate is the belt to its suspenders.
+    weekly_limit = subs_service.TIER_LIMITS[user.plan]["audits_per_week"]
+    used, next_reset = _audit_usage_this_week(db, user.id)
+    if used >= weekly_limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "audit_weekly_limit",
+                "message": (
+                    f"You've used your {weekly_limit} audit"
+                    f"{'s' if weekly_limit != 1 else ''} for this week."
+                ),
+                "tier": user.plan.value,
+                "limit": weekly_limit,
+                "used": used,
+                "next_reset_at": next_reset.isoformat(),
+            },
+        )
 
     # Guard against stacking audits on a business that already has one
     # in-flight (pending or running). The on_failure callback in

@@ -83,6 +83,31 @@ export function impactLabel(impact) {
   return impact;
 }
 
+/**
+ * Friendly difficulty pill for the finding modal. Derived from
+ * ``estimated_time`` because that's the only effort signal we persist
+ * (scrapers/* emit strings like "5 min", "30 min", "2 hours total", or
+ * "professional help"). Mapping:
+ *   - "professional help" → "Get a hand"
+ *   - any "hour(s)" mention → "Takes some focus"
+ *   - "X min" with X >= 20 → "Takes some focus"
+ *   - everything else (incl. unset) → "Beginner-friendly"
+ * Keeping the bucket count small so the pill stays a glance-able cue
+ * rather than a fine-grained effort grade.
+ * @param {string | null | undefined} estimatedTime
+ */
+export function difficultyLabel(estimatedTime) {
+  if (!estimatedTime) return 'Beginner-friendly';
+  const lc = estimatedTime.toLowerCase();
+  if (lc.includes('professional')) return 'Get a hand';
+  if (lc.includes('hour') || lc.includes('day') || lc.includes('week')) {
+    return 'Takes some focus';
+  }
+  const match = lc.match(/(\d+)\s*min/);
+  if (match && parseInt(match[1], 10) >= 20) return 'Takes some focus';
+  return 'Beginner-friendly';
+}
+
 // Pull the top N open recommendations across all sections.
 // Sort: trending-down sections first (a score that just dropped is the
 // thing the user most wants to know about), then by severity, then by id.

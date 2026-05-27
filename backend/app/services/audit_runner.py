@@ -13,8 +13,6 @@ from app.models import (
     Audit,
     AuditSection,
     Business,
-    Competitor,
-    CompetitorObservation,
     Recommendation,
     User,
 )
@@ -24,17 +22,15 @@ from app.models.enums import (
     AuditStatus,
     RecommendationFixStatus,
     RecommendationSeverity,
-    UserPlan,
 )
 from app.services import audit_events
 from app.services.email_service import (
     SCORE_CHANGE_NOTIFY_THRESHOLD,
     send_score_change_email,
 )
+from app.services.pillar_optout import enabled_pillars
 from app.services.prune_old_data import prune_old_audit_data
-from app.services.competitor_cache import fetch_competitor_metrics_cached
 from scrapers import (
-    CompetitorMetrics,
     audit_instagram,
     audit_maps,
     audit_nap,
@@ -142,14 +138,14 @@ def _previous_overall_score(
     )
     if prev is None:
         return None
-    # Same skip-failed rule the live run uses (see section_scores append
-    # below). Keeps score-change notification thresholds from triggering on
-    # phantom drops when a previously-failed section is still failing.
-    scores = [
-        s.score
-        for s in prev.sections
-        if s.score is not None and s.status.value != "failed"
-    ]
+    # Matches the live run's rule: include all sections (skipped /
+    # soft-failed ones contribute their 0). Previously this excluded
+    # ``failed`` sections to avoid phantom drops in the score-change
+    # notification, but that hid real "still missing your website"
+    # signals from the user. Symmetry with the live calc matters more
+    # than notification quietness — the threshold check below filters
+    # out tiny moves anyway.
+    scores = [s.score for s in prev.sections if s.score is not None]
     return round(sum(scores) / len(scores)) if scores else None
 
 
@@ -193,47 +189,6 @@ def _maybe_notify_score_change(
         )
 
 
-def _active_competitors(db: Session, business_id: int) -> list[Competitor]:
-    return (
-        db.query(Competitor)
-        .filter(
-            Competitor.business_id == business_id,
-            Competitor.archived_at.is_(None),
-        )
-        .order_by(Competitor.id)
-        .all()
-    )
-
-
-def _persist_competitor_observations(
-    db: Session,
-    audit_id: int,
-    metrics: list[CompetitorMetrics],
-) -> None:
-    """Insert one row per competitor scraped during this audit.
-
-    We persist even when ``rating`` / ``review_count`` came back ``None`` so
-    the trend chart can show "we tried on this date" rather than a gap that
-    could be confused with the competitor being un-tracked at the time.
-    """
-    if not metrics:
-        return
-    now = datetime.now(timezone.utc)
-    for m in metrics:
-        db.add(
-            CompetitorObservation(
-                competitor_id=m.competitor_id,
-                audit_id=audit_id,
-                rating=m.rating,
-                review_count=m.review_count,
-                instagram_followers=m.instagram_followers,
-                instagram_posts=m.instagram_posts,
-                observed_at=now,
-            )
-        )
-    db.commit()
-
-
 def _persist_section(
     db: Session,
     audit_id: int,
@@ -262,6 +217,11 @@ def _persist_section(
                 body_markdown=rec.body_markdown,
                 estimated_impact=rec.estimated_impact,
                 estimated_time=rec.estimated_time,
+                # Default the target to the emitting section — true for
+                # every scraper except NAP, which sets its own per-rec
+                # target so cross-pillar findings can be filtered by
+                # opt-out at read time.
+                fix_target=rec.fix_target or section.value,
                 fix_status=(
                     RecommendationFixStatus.done
                     if already_done
@@ -309,6 +269,12 @@ async def run_audit(audit_id: int) -> None:
         # NAP needs to compare against earlier sections' raw_data; we keep a
         # running map keyed by section name and pass it as a second arg below.
         prior_raw: dict[str, dict] = {}
+        # Pillars the business has opted *out* of via the FTUE
+        # questionnaire. We skip their scrapers entirely (saving the
+        # round-trip) and persist a placeholder failed/0 row so the
+        # audit shape is preserved — the read path then filters these
+        # out of the dashboard grid + overall score by section name.
+        enabled_set = enabled_pillars(business)
 
         # Built per-section so the progress events carry the right section name
         # without each scraper having to know its own slug.
@@ -343,6 +309,38 @@ async def run_audit(audit_id: int) -> None:
             return _cb
 
         for section, scraper in PIPELINE:
+            # FTUE opt-out: persist a 0/failed placeholder and move on
+            # without spending a network round-trip. ``enabled_pillars``
+            # already enforces "Maps can't be opted out" and "NAP needs
+            # >=2 other sources," so the only sections that actually
+            # land here are ``website`` / ``instagram`` (when the user
+            # said no) and ``nap`` (when both website + instagram are
+            # off, which leaves nothing to compare).
+            if section.value not in enabled_set:
+                db.add(
+                    AuditSection(
+                        audit_id=audit_id,
+                        section=section,
+                        score=0,
+                        status=AuditSectionStatus.failed,
+                        raw_data_json={"opted_out": True},
+                    )
+                )
+                db.commit()
+                section_outcomes[section] = "failed"
+                await stream.publish(
+                    {
+                        "type": "section_completed",
+                        "section": section.value,
+                        "status": "failed",
+                        "opted_out": True,
+                    }
+                )
+                # Don't feed into prior_raw — NAP must see it as absent.
+                # Don't append 0 to section_scores either — the runner's
+                # honest-overall principle stays intact; the read path
+                # is the one that drops opted-out pillars from the avg.
+                continue
             await stream.publish({"type": "section_started", "section": section.value})
             progress_cb = _make_progress_cb(section.value)
             try:
@@ -396,11 +394,18 @@ async def run_audit(audit_id: int) -> None:
                 db, business, result.discovered_fields
             ):
                 business_input = _to_business_input(business)
-            # A scraper can return SectionResult(status="failed") for soft failures
-            # (CAPTCHA, missing input, etc.) — keep those out of the overall average
-            # so a missing Instagram handle doesn't tank an otherwise-healthy score.
-            if result.status != AuditSectionStatus.failed.value:
-                section_scores.append(result.score)
+            # Score is averaged across all four sections. Skipped /
+            # soft-failed sections (no website provided, no IG handle,
+            # etc.) contribute their score as-is — the scrapers already
+            # return ``score=0`` for these cases, and that's the honest
+            # read: if we couldn't verify website + Instagram for a
+            # business, the user's overall health *should* reflect that
+            # they have work to do, not silently round up by excluding
+            # the gaps. Used to skip ``failed`` sections, which made
+            # half-empty audits read as 85/100 — misleading, since the
+            # per-section "Skipped" cards already prompt the user to
+            # fix the underlying data.
+            section_scores.append(result.score)
             await stream.publish(
                 {
                     "type": "section_completed",
@@ -412,43 +417,18 @@ async def run_audit(audit_id: int) -> None:
                 }
             )
 
-        # Phase 4 — competitor tracking. Paid-only, runs after the main
-        # pipeline so a competitor scraping failure can't tank the user's
-        # own audit score. Free users are explicitly skipped (we don't even
-        # enumerate their competitors row — there shouldn't be any).
-        user = db.get(User, business.user_id)
-        if user is not None and user.plan == UserPlan.paid:
-            competitors = _active_competitors(db, business.id)
-            tracked = [(c.id, c.maps_url) for c in competitors if c.maps_url]
-            if tracked:
-                await stream.publish(
-                    {
-                        "type": "competitors_started",
-                        "count": len(tracked),
-                    }
-                )
-                competitor_progress = _make_progress_cb("competitors")
-                try:
-                    metrics = await fetch_competitor_metrics_cached(
-                        db, tracked, progress=competitor_progress
-                    )
-                    _persist_competitor_observations(db, audit_id, metrics)
-                    await stream.publish(
-                        {
-                            "type": "competitors_completed",
-                            "observed": len(metrics),
-                        }
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "competitor scraping failed for audit_id=%s", audit_id
-                    )
-                    await stream.publish(
-                        {
-                            "type": "competitors_failed",
-                            "error": repr(exc),
-                        }
-                    )
+        # Competitor scraping is no longer coupled to user-triggered
+        # audits. As of the 2026-05-26 architectural shift, competitor
+        # observations are written exclusively by the weekly
+        # ``competitor_refresh`` cron (see ``services/competitor_refresh.py``).
+        # Reasons: (a) user audits should be about the user's own business
+        # only — coupling competitor scrape made every audit much heavier;
+        # (b) decoupling means competitor trend points keep landing on a
+        # predictable cadence even in weeks the user doesn't audit;
+        # (c) the audit pipeline's failure modes (CAPTCHA, slow Maps) no
+        # longer cascade into competitor-side noise. The historical
+        # ``competitors_started`` / ``competitors_completed`` stream events
+        # are gone with the block.
 
         overall = round(sum(section_scores) / len(section_scores)) if section_scores else 0
         audit = db.get(Audit, audit_id)

@@ -364,9 +364,9 @@
       </div>
 
       <p class="mt-4 text-xs text-canvas-muted">
-        These lines aren't live — each point is a snapshot from when an audit
-        ran. Your lines update when you run an audit on a business; competitor
-        lines refresh on the weekly automatic check.
+        These lines aren't live. Your own lines land a new point every time
+        you run an audit on the business. Competitor lines refresh
+        automatically once a week — you don't have to do anything.
       </p>
     </div>
 

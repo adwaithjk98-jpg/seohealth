@@ -22,6 +22,13 @@
   body {
     background-color: theme('colors.canvas.DEFAULT');
     color: theme('colors.canvas.ink');
+    /* PWA bottom safe-area only — top is handled in the sticky header
+       itself (see +layout.svelte) so the cream theme_color flows
+       continuously from the status bar through the header without a
+       visible cream strip + green border-b hairline between them.
+       ``env(safe-area-inset-bottom)`` lifts content above the
+       Android gesture bar; collapses to 0 in normal browser tabs. */
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 

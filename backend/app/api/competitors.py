@@ -12,6 +12,7 @@ here, not just in the UI, so a curl or stale tab can't bypass it.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -35,8 +36,35 @@ from app.schemas.competitor import (
 from app.services import competitor_insights as insights_service
 from app.services import subscriptions as subs_service
 from app.services import visibility_score as visibility_service
+from app.services.competitor_cache import normalize_maps_url
+from app.workers.queue import enqueue_competitor_refresh
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _kick_first_refresh(maps_url: str | None) -> None:
+    """Best-effort: enqueue an immediate refresh for a newly-tracked competitor.
+
+    Without this, a freshly-added competitor's trend chart is blank for
+    up to a week — the daily ``competitor_refresh`` cron only acts on
+    rows whose cache entry is stale (>6 days). A brand new row has no
+    cache entry, but the cron only fires once per day, so users still
+    saw "we'll start drawing your line on the next refresh" up to ~24h
+    after Track. Enqueueing here lands the first observation in seconds.
+
+    Silent on Redis-down: the cron path is still in place so the
+    competitor will be picked up on the next nightly tick.
+    """
+    if not maps_url:
+        return
+    try:
+        key = normalize_maps_url(maps_url)
+        if key:
+            enqueue_competitor_refresh(key, maps_url)
+    except Exception:
+        logger.exception("immediate competitor refresh enqueue failed for %r", maps_url)
 
 
 def _own_business_or_404(db: Session, user: User, business_id: int) -> Business:
@@ -205,6 +233,69 @@ def add_competitor(
             },
         )
 
+    # If the user previously tracked this competitor and archived them,
+    # un-archive the original row instead of creating a duplicate.
+    # Otherwise a re-add stranded the old observations on a dead row +
+    # spawned a fresh one with no history. We update name / IG / website
+    # from the new payload in case the user is correcting a typo.
+    existing_archived = (
+        db.query(Competitor)
+        .filter(
+            Competitor.business_id == business.id,
+            Competitor.archived_at.isnot(None),
+            Competitor.maps_url == maps_url,
+        )
+        .order_by(Competitor.archived_at.desc())
+        .first()
+    )
+    if existing_archived is not None:
+        # Cap still applies — un-archiving counts toward it just like
+        # a fresh add would.
+        revival_count = (
+            db.query(Competitor)
+            .join(Business, Competitor.business_id == Business.id)
+            .filter(
+                Business.user_id == user.id,
+                Business.archived_at.is_(None),
+                Competitor.archived_at.is_(None),
+            )
+            .count()
+        )
+        if revival_count >= limit:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "code": "competitor_limit_reached",
+                    "message": (
+                        f"Your plan allows up to {limit} competitors total. "
+                        "Remove one to bring this archived one back."
+                    ),
+                    "tier": user.plan.value,
+                    "limit": limit,
+                    "competitor_count": revival_count,
+                },
+            )
+        existing_archived.archived_at = None
+        name_override = (payload.name or "").strip()
+        if name_override:
+            existing_archived.name = name_override
+        ig_override = (payload.instagram_url or "").strip()
+        if ig_override:
+            existing_archived.instagram_url = ig_override
+        web_override = (payload.website_url or "").strip()
+        if web_override:
+            existing_archived.website_url = web_override
+        db.commit()
+        db.refresh(existing_archived)
+        _kick_first_refresh(existing_archived.maps_url)
+        latest_map = _latest_observation_map(db, [existing_archived.id])
+        counts = _observation_counts(db, [existing_archived.id])
+        return _to_response(
+            existing_archived,
+            latest=latest_map.get(existing_archived.id),
+            observation_count=counts.get(existing_archived.id, 0),
+        )
+
     # Phase 4.6: cap is total across all of the user's businesses (not
     # per-business). Join through Business so a user can't sidestep the
     # cap by spreading competitors across each of their businesses.
@@ -243,6 +334,7 @@ def add_competitor(
     db.add(competitor)
     db.commit()
     db.refresh(competitor)
+    _kick_first_refresh(competitor.maps_url)
     return _to_response(competitor, latest=None, observation_count=0)
 
 

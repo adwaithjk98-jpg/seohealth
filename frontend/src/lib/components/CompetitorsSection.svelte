@@ -327,9 +327,9 @@
                       · last seen {formatRelativeTime(competitor.latest_observed_at + 'Z')}
                     {/if}
                   {:else if competitor.observation_count === 0}
-                    We'll start gathering data on your next audit.
+                    We'll start gathering data on the next weekly refresh.
                   {:else}
-                    Couldn't read this listing on the last audit.
+                    Couldn't read this listing on the last refresh.
                   {/if}
                 </p>
               </div>

@@ -292,6 +292,28 @@ def _website_checks(raw: dict[str, Any]) -> list[SubCheck]:
             )
         )
 
+    # IG-on-website cross-check — only render when we have an answer
+    # (skip silent ``no_input`` state so the card isn't cluttered).
+    ig_state = raw.get("ig_link_state")
+    if ig_state in ("linked", "missing", "mismatch"):
+        if ig_state == "linked":
+            check_status = "good"
+            value = "Linked"
+        elif ig_state == "mismatch":
+            check_status = "bad"
+            actual = raw.get("ig_link_actual") or "another account"
+            value = f"Wrong handle: @{actual}"
+        else:
+            check_status = "warn"
+            value = "Not linked"
+        checks.append(
+            SubCheck(
+                label="Instagram linked from site",
+                status=check_status,
+                value=value,
+            )
+        )
+
     return checks
 
 

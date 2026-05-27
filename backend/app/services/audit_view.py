@@ -25,6 +25,7 @@ from app.services.audit_summary import (
     section_meta,
     section_summary,
 )
+from app.services.pillar_optout import enabled_pillars
 
 
 SECTION_ORDER = ["maps", "website", "instagram", "nap", "competitors"]
@@ -47,10 +48,16 @@ def _trend(current: int | None, previous: int | None) -> str | None:
 
 
 def _previous_section_scores(
-    db: Session, business_id: int, current_audit_id: int
+    db: Session, business_id: int, current_audit_id: int, enabled: frozenset[str]
 ) -> tuple[dict[str, int | None], int | None]:
     """Returns ({section_name: score}, overall_score) for the most recent
     completed audit for this business, excluding the current audit.
+
+    ``enabled`` is the current business's opt-in pillar set — applied to
+    the previous audit too so the trend comparison is apples-to-apples.
+    A pillar that's opted out today doesn't influence the previous
+    overall either (otherwise the trend arrow would conflate a real
+    score change with a settings change).
     """
     prev_audit = (
         db.query(Audit)
@@ -68,7 +75,11 @@ def _previous_section_scores(
     scores: list[int] = []
     for sec in prev_audit.sections:
         by_section[sec.section.value] = sec.score
-        if sec.score is not None and sec.status.value != "failed":
+        # Match the live runner: failed sections (no website / no IG /
+        # Maps couldn't load) contribute their persisted score (0). But
+        # skip pillars the business has opted out of — they shouldn't
+        # drag the previous overall either.
+        if sec.score is not None and sec.section.value in enabled:
             scores.append(sec.score)
     overall = round(sum(scores) / len(scores)) if scores else None
     return by_section, overall
@@ -79,9 +90,30 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
     sections: list[AuditSection] = list(audit.sections)
     recommendations: list[Recommendation] = list(audit.recommendations)
 
-    # Group recommendations by section.
+    # FTUE opt-out set. Opt-outs apply at read time uniformly — even
+    # historical audits get filtered by the current settings, so the
+    # dashboard's pillar grid and overall score stay consistent with
+    # what the user has chosen *now*. ``business`` can be None only if
+    # the audit's parent row was deleted, which the audits.create_audit
+    # flow makes effectively impossible; treat that as everything-on.
+    enabled = (
+        enabled_pillars(business)
+        if business is not None
+        else frozenset({"maps", "website", "instagram", "nap"})
+    )
+
+    # Group recommendations by section, dropping any whose ``fix_target``
+    # lands on an opted-out pillar. e.g. a NAP rec targeting Instagram
+    # disappears for a business that said it doesn't use Instagram —
+    # otherwise the Top-3 list would suggest fixes on a channel the
+    # user just told us they don't have. Recs with a NULL fix_target
+    # (older rows, pre-migration) fall back to ``rec.section`` so the
+    # filter still behaves sensibly on history.
     recs_by_section: dict[str, list[Recommendation]] = {}
     for rec in recommendations:
+        target = rec.fix_target or rec.section.value
+        if target not in enabled:
+            continue
         recs_by_section.setdefault(rec.section.value, []).append(rec)
 
     # Order recommendations within a section by severity then by id.
@@ -90,7 +122,7 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         recs.sort(key=lambda r: (severity_rank.get(r.severity.value, 99), r.id))
 
     prev_section_scores, prev_overall = _previous_section_scores(
-        db, audit.business_id, audit.id
+        db, audit.business_id, audit.id, enabled
     )
 
     section_payloads = []
@@ -102,6 +134,7 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         summary = section_summary(sec.section.value, sec.raw_data_json)
         sec_recs = recs_by_section.get(sec.section.value, [])
         prev_score = prev_section_scores.get(sec.section.value)
+        section_enabled = sec.section.value in enabled
 
         section_payloads.append(
             {
@@ -117,17 +150,25 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
                 "sub_checks": sub_checks,
                 "previous_score": prev_score,
                 "trend": _trend(score, prev_score),
+                # ``enabled=false`` means the user explicitly opted out
+                # of this pillar via the FTUE questionnaire. Frontend
+                # hides the card from the grid + drops it from the
+                # 4-pillar visual, but the section detail page is still
+                # reachable so the data isn't lost.
+                "enabled": section_enabled,
                 "recommendations": [
                     _recommendation_payload(r) for r in sec_recs
                 ],
             }
         )
-        # Mirror the live runner's "skip failed sections" rule
-        # (audit_runner.py around the section_scores append). Counting a
-        # section that failed because the user has no IG handle on file as
-        # a hard 0 was making the dashboard's overall diverge from the
-        # number the live-completion screen had just shown them.
-        if score is not None and sec.status.value != "failed":
+        # Mirror the live runner (audit_runner.py around the
+        # ``section_scores.append`` block): every section with a
+        # persisted score contributes — including ``failed`` ones that
+        # the scrapers scored 0 for. The new ``enabled`` filter drops
+        # pillars the user has opted out of so a website-less café
+        # isn't scored as if a 0/100 website pillar were dragging them
+        # down.
+        if score is not None and section_enabled:
             section_scores.append(score)
 
     # Sort sections in plan-defined display order.
@@ -139,8 +180,15 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         round(sum(section_scores) / len(section_scores)) if section_scores else None
     )
 
-    open_count = sum(1 for r in recommendations if r.fix_status.value == "open")
-    done_count = sum(1 for r in recommendations if r.fix_status.value == "done")
+    # Counts respect the same opt-out filter as the per-section lists —
+    # the "6 to go" badge on the dashboard would otherwise count fixes
+    # the user just told us not to care about.
+    visible_recs = [
+        r for r in recommendations
+        if (r.fix_target or r.section.value) in enabled
+    ]
+    open_count = sum(1 for r in visible_recs if r.fix_status.value == "open")
+    done_count = sum(1 for r in visible_recs if r.fix_status.value == "done")
 
     return {
         "audit_id": audit.id,

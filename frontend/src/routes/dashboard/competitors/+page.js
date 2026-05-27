@@ -1,30 +1,20 @@
-// Competitor Hub loader. Aggregates active competitors across every
-// business the user owns, since the backend stores them per-business but
-// the hub is a single top-level view.
+// Competitor Hub loader. Reads the user's businesses from the parent
+// dashboard loader (so a tab-switch doesn't re-fetch /api/businesses) and
+// fans out to /api/businesses/{id}/competitors per business.
 //
-// We do a fan-out fetch (one /competitors call per business) rather than
-// add a new backend endpoint — paid users cap at 3 businesses, so the
-// fan-out is bounded and trivially small. If that limit ever grows, this
-// is the place to swap in a dedicated aggregator route.
+// Paid users cap at 3 businesses, so the fan-out is bounded and trivially
+// small. If that limit ever grows, this is the place to swap in a
+// dedicated aggregator route.
 
 /** @type {import('@sveltejs/kit').Load} */
-export async function load({ fetch }) {
-  const bizRes = await fetch('/api/businesses', { credentials: 'same-origin' });
-  if (bizRes.status === 401) {
-    return {
-      businesses: null,
-      competitors: [],
-      error: 'unauthenticated'
-    };
+export async function load({ fetch, parent }) {
+  const { businesses, error } = await parent();
+  if (error === 'unauthenticated') {
+    return { businesses: null, competitors: [], error: 'unauthenticated' };
   }
-  if (!bizRes.ok) {
-    return {
-      businesses: [],
-      competitors: [],
-      error: `Couldn't load your businesses (${bizRes.status})`
-    };
+  if (!businesses || businesses.length === 0) {
+    return { businesses: businesses ?? [], competitors: [], error };
   }
-  const businesses = await bizRes.json();
 
   // Fan out. Failures on individual businesses don't sink the whole page;
   // we just drop that business from the aggregate and let the user retry.
@@ -52,9 +42,5 @@ export async function load({ fetch }) {
     }
   }
 
-  return {
-    businesses,
-    competitors,
-    error: null
-  };
+  return { businesses, competitors, error: null };
 }

@@ -2,10 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
     <link rel="preconnect" href="https://rsms.me/" />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+
+    <!-- PWA — makes "Install app" / "Add to Home Screen" produce a real
+         app-on-the-homescreen experience instead of a browser shortcut.
+         Manifest declares display=standalone (no browser chrome), brand
+         theme-color, and the favicon SVG as the home-screen icon. -->
+    <link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+    <!-- ``theme-color`` matches the canvas background so the status
+         bar visually blends into the app instead of painting a solid
+         green band. Android auto-flips status bar icons to dark for
+         readability on the light background. -->
+    <meta name="theme-color" content="#faf8f4" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="AuditHealth" />
+    <link rel="apple-touch-icon" href="%sveltekit.assets%/favicon.svg" />
+
     <title>Local SEO Health Monitor</title>
     %sveltekit.head%
   </head>

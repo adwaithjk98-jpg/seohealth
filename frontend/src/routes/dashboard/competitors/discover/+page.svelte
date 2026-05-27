@@ -10,6 +10,7 @@
     addCompetitor,
     createDiscoveryScan,
     getDiscoveryScan,
+    listCompetitors,
     listDiscoveryScans
   } from '$lib/api.js';
   import ManualAddCompetitorModal from '$lib/components/ManualAddCompetitorModal.svelte';
@@ -25,6 +26,14 @@
   const subState = $derived(authState.user?.subscription_state ?? null);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
   const isPaid = $derived(tier === 'paid');
+  const competitorLimit = $derived(subState?.limits?.competitors ?? 0);
+  // Live "how many slots used" badge for the review-cards UI. Reads from
+  // ``trackedForAnchor`` (already refreshed on every successful Track),
+  // so users see the cap approach instead of getting blindsided by a 402.
+  const trackedCount = $derived(trackedForAnchor.length);
+  const atCompetitorCap = $derived(
+    competitorLimit > 0 && trackedCount >= competitorLimit
+  );
 
   // Anchor business picker + query input ----------------------------------
   let selectedBusinessId = $state(/** @type {number | null} */ (null));
@@ -32,12 +41,23 @@
   let submitting = $state(false);
   let submitError = $state(/** @type {string | null} */ (null));
 
-  // Once the user has businesses loaded, default to the first one and
-  // pre-fill a reasonable query.
+  // Once the user has businesses AND prior scans loaded, pick a
+  // sensible default anchor. If they have a recent done scan, prefer
+  // THAT scan's business so the gateway ("Revisit your earlier list")
+  // shows up immediately. Otherwise fall back to the most recently
+  // added business. We wait on ``priorScansLoading`` so we don't
+  // briefly default to ``businesses[0]`` before scans arrive and then
+  // miss the chance to override (the effect short-circuits once
+  // ``selectedBusinessId`` is set).
   $effect(() => {
-    if (selectedBusinessId == null && businesses.length > 0) {
-      selectedBusinessId = businesses[0].id;
-    }
+    if (selectedBusinessId != null) return;
+    if (businesses.length === 0) return;
+    if (priorScansLoading) return;
+    const recentScanBizId = priorScans[0]?.business_id;
+    const matchesActive = businesses.some(
+      (/** @type {any} */ b) => b.id === recentScanBizId
+    );
+    selectedBusinessId = matchesActive ? recentScanBizId : businesses[0].id;
   });
 
   const anchorBusiness = $derived(
@@ -131,7 +151,66 @@
     return String(result.maps_url || result.name || JSON.stringify(result));
   }
 
-  const results = $derived(/** @type {any[]} */ (scan?.results ?? []));
+  // Already-tracked competitors for the current anchor. Used to filter
+  // revisit cards so a lead the user tracked AFTER the scan ran doesn't
+  // resurface in the review-cards UI as a decision they still owe.
+  // The server-side filter in ``discovery_scan_job._filter_out_own_roster``
+  // runs once at write time and can't know about subsequent tracks, so
+  // we re-check on the client every time the anchor or scan changes.
+  /** @type {{ maps_url?: string | null, name?: string | null }[]} */
+  let trackedForAnchor = $state([]);
+
+  // The dedup must follow whichever business the *cards* are anchored to.
+  // When the user is viewing a saved scan via ``?scan_id=N`` the anchor
+  // is ``scan.business_id``; that can differ from the form's dropdown
+  // selection, which defaults to ``businesses[0]``. Using the form's
+  // value would fetch the wrong business's competitor list and the
+  // dedup would silently match nothing.
+  const dedupBusinessId = $derived(
+    scan?.business_id ?? selectedBusinessId ?? null
+  );
+
+  async function refreshTrackedForAnchor() {
+    if (dedupBusinessId == null) {
+      trackedForAnchor = [];
+      return;
+    }
+    try {
+      const rows = await listCompetitors(dedupBusinessId);
+      trackedForAnchor = (rows ?? []).map((/** @type {any} */ c) => ({
+        maps_url: c.maps_url,
+        name: c.name
+      }));
+    } catch (err) {
+      // Non-fatal — leaves dedup empty, user just sees duplicates with
+      // 409s if they re-Track. The original error message surfaces in
+      // ``cardError`` so the UX still recovers cleanly.
+      console.warn('listCompetitors failed', err);
+      trackedForAnchor = [];
+    }
+  }
+
+  $effect(() => {
+    void dedupBusinessId; // re-run on anchor change (form OR loaded scan)
+    refreshTrackedForAnchor();
+  });
+
+  /** @param {any} r */
+  function isAlreadyTracked(r) {
+    const url = r.maps_url ?? null;
+    const name = (r.name ?? '').trim().toLowerCase();
+    for (const t of trackedForAnchor) {
+      if (url && t.maps_url && t.maps_url === url) return true;
+      if (name && (t.name ?? '').trim().toLowerCase() === name) return true;
+    }
+    return false;
+  }
+
+  const results = $derived(
+    /** @type {any[]} */ ((scan?.results ?? []).filter(
+      (/** @type {any} */ r) => !isAlreadyTracked(r)
+    ))
+  );
 
   // Reset card decisions whenever a brand new result set arrives, so a
   // re-run doesn't carry over stale skipped/tracked flags.
@@ -234,10 +313,20 @@
     try {
       await addCompetitor(anchorBusiness.id, {
         maps_url: result.maps_url || '',
-        name: result.name || undefined
+        name: result.name || undefined,
+        // Forward whatever the discovery scraper extracted. The
+        // backend persists these on the Competitor row, which is
+        // what the weekly refresh uses to scrape IG follower / post
+        // counts (no website_url scrape — kept on the row for the
+        // hub's deep-dive link).
+        instagram_url: result.instagram_url || undefined,
+        website_url: result.website || result.website_url || undefined
       });
       cardState = { ...cardState, [key]: 'tracked' };
       showToast(`${result.name || 'Competitor'} added`);
+      // Keep the dedup set fresh so revisiting later doesn't surface
+      // anything the user just tracked. Cheap one-shot fetch.
+      refreshTrackedForAnchor();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not track this competitor.';
       // 402 (paid-tier limit hit) and 409 (already tracking) are the common
@@ -367,17 +456,19 @@
   }
 
   /**
-   * Four visibility pillars for the 2x2 card grid. The scrape currently
-   * pulls Maps + Reviews; Instagram/Website aren't in the default field
-   * set so they show as ``unknown`` (muted dot, "we'll check on track"
-   * copy). Switching to a "real" reading requires expanding the fields
-   * payload in createDiscoveryScan.
+   * Four visibility pillars for the 2x2 card grid. All four come from
+   * what the discovery scrape actually returned for this lead — no
+   * more "we'll check on track" placeholders. Instagram and website
+   * resolve to ``present`` (✓) when the scraper extracted a URL for
+   * them, or ``unknown`` (—) when it didn't find one.
    * @param {any} result
    * @returns {Array<{ key: string, label: string, status: 'strong' | 'present' | 'unknown' | 'thin', detail: string }>}
    */
   function visibilityPillars(result) {
     const rating = result.rating != null ? Number(result.rating) : null;
     const reviews = result.review_count != null ? Number(result.review_count) : null;
+    const igUrl = result.instagram_url || null;
+    const siteUrl = result.website || result.website_url || null;
 
     /** @type {'strong' | 'present' | 'unknown' | 'thin'} */
     let mapsStatus = 'unknown';
@@ -401,14 +492,14 @@
       {
         key: 'instagram',
         label: 'Instagram',
-        status: /** @type {const} */ ('unknown'),
-        detail: 'Checked on track'
+        status: /** @type {const} */ (igUrl ? 'present' : 'unknown'),
+        detail: igUrl ? 'Found' : '—'
       },
       {
         key: 'website',
         label: 'Website',
-        status: /** @type {const} */ ('unknown'),
-        detail: 'Checked on track'
+        status: /** @type {const} */ (siteUrl ? 'present' : 'unknown'),
+        detail: siteUrl ? 'Found' : '—'
       }
     ];
   }
@@ -816,26 +907,47 @@
         {@const position = currentIndex + 1}
         {@const isInCity = inCityResults.includes(currentResult)}
         <div class="space-y-3">
-          <div class="flex items-center justify-between gap-3 text-xs">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span class="font-medium text-canvas-ink">
               {position} <span class="text-canvas-muted">/ {total} suggestions</span>
             </span>
-            <span
-              class={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
-                isInCity
-                  ? 'bg-healthy-50 text-healthy-700'
-                  : 'bg-canvas-soft text-canvas-ink/80'
-              }`}
-            >
+            <div class="flex flex-wrap items-center gap-2">
+              {#if competitorLimit > 0}
+                <span
+                  class={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+                    atCompetitorCap
+                      ? 'bg-attention-50 text-attention-700'
+                      : 'bg-canvas-soft text-canvas-ink/80'
+                  }`}
+                  title={atCompetitorCap
+                    ? 'You’ve reached your plan’s competitor cap. Remove one to track another.'
+                    : `${competitorLimit - trackedCount} ${competitorLimit - trackedCount === 1 ? 'slot' : 'slots'} left on your plan`}
+                >
+                  <span
+                    class={`h-1.5 w-1.5 rounded-full ${
+                      atCompetitorCap ? 'bg-attention-500' : 'bg-canvas-muted/70'
+                    }`}
+                  ></span>
+                  {trackedCount} / {competitorLimit} tracked
+                </span>
+              {/if}
               <span
-                class={`h-1.5 w-1.5 rounded-full ${
-                  isInCity ? 'bg-healthy-500' : 'bg-canvas-muted/70'
+                class={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+                  isInCity
+                    ? 'bg-healthy-50 text-healthy-700'
+                    : 'bg-canvas-soft text-canvas-ink/80'
                 }`}
-              ></span>
-              {isInCity
-                ? `Found in ${anchorBusiness?.city ?? 'your city'}`
-                : 'Found nearby'}
-            </span>
+              >
+                <span
+                  class={`h-1.5 w-1.5 rounded-full ${
+                    isInCity ? 'bg-healthy-500' : 'bg-canvas-muted/70'
+                  }`}
+                ></span>
+                {isInCity
+                  ? `Found in ${anchorBusiness?.city ?? 'your city'}`
+                  : 'Found nearby'}
+              </span>
+            </div>
           </div>
           <div
             class="h-1.5 w-full overflow-hidden rounded-full bg-canvas-soft"

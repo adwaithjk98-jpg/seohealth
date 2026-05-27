@@ -5,6 +5,13 @@ async function readJsonError(res) {
     const data = await res.json();
     if (typeof data?.detail === 'string') return data.detail;
     if (Array.isArray(data?.detail) && data.detail[0]?.msg) return data.detail[0].msg;
+    // Structured backend errors come back as
+    //   {detail: {code, message, ...other-fields}}
+    // e.g. the 402 competitor_limit_reached and 429 audit_weekly_limit
+    // shapes. Surface the human-readable ``message`` rather than letting
+    // the helper fall through to "Request failed (402)" which leaks the
+    // raw HTTP status to the user.
+    if (typeof data?.detail?.message === 'string') return data.detail.message;
   } catch {
     /* fall through */
   }
@@ -116,6 +123,71 @@ export async function archiveBusiness(businessId) {
   if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
 }
 
+/**
+ * Fetch a single business by id. Mirrors the row shape used by the
+ * dashboard's list endpoint so the detail page can read
+ * `audit_schedule_cadence` / `next_auto_audit_at` without piggybacking
+ * on the audit detail payload (which doesn't carry them).
+ * @param {number} businessId
+ */
+export async function getBusiness(businessId) {
+  const res = await fetch(`/api/businesses/${businessId}`, {
+    credentials: 'same-origin'
+  });
+  if (!res.ok) {
+    const err = new Error(await readJsonError(res));
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+/**
+ * Update FTUE questionnaire answers for a business. Pass only the
+ * fields you want to write — null / undefined keep the existing value.
+ * @param {number} businessId
+ * @param {{
+ *   business_type?: 'cafe' | 'salon' | 'retail' | 'service' | 'supplier' | 'other' | null,
+ *   has_website?: boolean | null,
+ *   has_instagram?: boolean | null
+ * }} patch
+ */
+export async function updateBusinessProfile(businessId, patch) {
+  const res = await fetch(`/api/businesses/${businessId}/profile`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(patch)
+  });
+  if (!res.ok) {
+    const err = new Error(await readJsonError(res));
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+/**
+ * Set or clear the auto-audit cadence on a business. ``cadence=null``
+ * turns scheduling off. Returns the updated business row.
+ * @param {number} businessId
+ * @param {'weekly' | 'biweekly' | 'monthly' | null} cadence
+ */
+export async function setBusinessSchedule(businessId, cadence) {
+  const res = await fetch(`/api/businesses/${businessId}/schedule`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ cadence })
+  });
+  if (!res.ok) {
+    const err = new Error(await readJsonError(res));
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 export async function getBusinessTrends(businessId) {
   const res = await fetch(`/api/businesses/${businessId}/trends`, {
     credentials: 'same-origin'
@@ -145,7 +217,22 @@ export async function createDiscoveryScan(payload) {
     business_id: payload.business_id,
     query: payload.query,
     num_leads: payload.num_leads ?? 20,
-    fields: payload.fields ?? ['name', 'address', 'category', 'rating', 'review_count', 'maps_url'],
+    fields:
+      payload.fields ?? [
+        'name',
+        'address',
+        'category',
+        'rating',
+        'review_count',
+        'maps_url',
+        // Pulling these so the discovery cards can show real IG /
+        // website status (✓ / —) instead of "Checked after you Track",
+        // and so the Competitor row gets ``instagram_url`` populated
+        // at Track time — that's what the weekly refresh uses to
+        // scrape follower/post counts going forward.
+        'website',
+        'instagram_url'
+      ],
     filters: payload.filters ?? null
   };
   const res = await fetch('/api/discovery-scans', {

@@ -4,7 +4,7 @@
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
 
-  import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
+  import { authState, loadCurrentUser, greetingName } from '$lib/auth.svelte.js';
   import { trendArrow, trendTone, scoreTone, formatRelativeTime } from '$lib/dashboard.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
 
@@ -80,7 +80,7 @@
     </p>
     <h1 class="mt-3 text-2xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
       Welcome back{#if authState.user},
-        <span class="block break-all text-healthy-600 sm:inline">{authState.user.email}</span>
+        <span class="text-healthy-600">{greetingName(authState.user)}</span>
       {/if}
     </h1>
     <p class="mt-2 text-sm text-canvas-muted">
@@ -93,9 +93,10 @@
       class="card flex flex-col gap-3 border border-attention-100 bg-attention-50/70 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
     >
       <div class="text-sm text-canvas-ink">
-        <p class="font-medium">Upgrade to unlock weekly auto-audits</p>
+        <p class="font-medium">Upgrade to schedule auto-audits</p>
         <p class="text-xs text-canvas-muted">
-          Paid plans re-check your business every week and email you the moment your score moves.
+          Paid plans let you pick a weekly, bi-weekly, or monthly cadence per business — and
+          email you the moment your score moves.
         </p>
       </div>
       <a class="btn-primary w-full sm:w-auto" href="/billing">See paid plan</a>
@@ -147,12 +148,12 @@
               <p class="truncate text-base font-semibold text-canvas-ink">{biz.name}</p>
               <p class="text-xs text-canvas-muted">{biz.city} · {biz.country}</p>
             </div>
-            {#if biz.latest_grade}
+            {#if biz.latest_score != null}
               <span
-                class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${gradeToneClass[tone]}`}
-                title={biz.latest_score != null ? `Score ${biz.latest_score}/100` : ''}
+                class={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${gradeToneClass[tone]}`}
+                title={`Score ${biz.latest_score}/100`}
               >
-                {biz.latest_grade}
+                {biz.latest_score}
                 {#if arrow}
                   <span class={`text-[10px] ${trendToneClass[trendTone(biz.latest_trend)]} rounded-full px-1`}>
                     {arrow}

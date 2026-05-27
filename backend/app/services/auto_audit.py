@@ -1,22 +1,35 @@
-"""Auto-audit dispatcher — the heart of Phase 3's recurring-audit engine.
+"""Auto-audit dispatcher — opt-in, cadence-aware, quota-aware (Phase 5.x).
 
 Two surfaces:
 
 * ``dispatch_due_audits()`` is enqueued by rq-scheduler on a daily cron
   (see ``scripts/run_scheduler.py``). It scans every non-archived business
-  belonging to a paid user, checks the last completed audit's age, and
-  enqueues a fresh ``scheduled`` audit for anything past its weekly
-  cadence. Free-tier businesses are intentionally excluded — auto-audits
-  are a paid feature (AuditAppPlan §8 "Pricing model" + the upgrade
-  banner the dashboard shows free users).
+  whose owner has **explicitly enabled** a schedule
+  (``Business.audit_schedule_cadence`` set), checks the cadence interval
+  against the last completed audit, and enqueues a fresh ``scheduled``
+  audit for anything past due — *provided* the user still has weekly
+  audit quota left. If the user is out of slots, the business is
+  skipped this tick; the next nightly tick will try again.
 
 * ``next_auto_audit_at()`` is a read-side helper consumed by the
   businesses API so the dashboard can render "Next auto-audit scheduled
-  for …" without a second round-trip.
+  for …" without a second round-trip. Returns ``None`` when no cadence
+  is set.
 
-The dispatcher is fully idempotent: if a business already has a pending /
-running audit (queued by an earlier tick, or kicked off manually) it's
+The dispatcher is fully idempotent: if a business already has a pending
+or running audit (queued by an earlier tick, or kicked off manually) it's
 skipped, so the worker never sees duplicates.
+
+Architectural notes (2026-05-26 shift):
+
+* Auto-audits used to fire automatically for every paid user's business
+  on a fixed 7-day cadence. That was changed to **opt-in per business**
+  because users want control over when their slots get spent — surprise
+  audits chewed through the weekly cap without consent.
+* Auto-audits no longer bypass the user's manual-audit quota. The
+  ``create_audit`` endpoint and this dispatcher both gate on the same
+  ``_audit_usage_this_week`` count, so scheduled + manual audits share
+  one bucket.
 """
 from __future__ import annotations
 
@@ -29,15 +42,18 @@ from sqlalchemy.orm import Session as DbSession
 from app.db import SessionLocal
 from app.models import Audit, Business, User
 from app.models.enums import AuditStatus, AuditTrigger, UserPlan
+from app.services import subscriptions as subs_service
 from app.workers.queue import enqueue_audit
 
 logger = logging.getLogger(__name__)
 
-# Paid tier: weekly. Free tier: no auto-audits (the prompt's constraint
-# checklist: "Are free users restricted from auto-audits? Yes"). If we ever
-# introduce a free-tier monthly cadence the only change here is mapping
-# UserPlan.free -> 30.
-_PAID_CADENCE_DAYS = 7
+
+# Cadence → interval in days. Add new values here when the UI gains them.
+_CADENCE_DAYS: dict[str, int] = {
+    "weekly": 7,
+    "biweekly": 14,
+    "monthly": 30,
+}
 
 
 def _now_naive() -> datetime:
@@ -62,11 +78,7 @@ def _last_completed_at(db: DbSession, business_id: int) -> datetime | None:
 
 
 def _has_active_audit(db: DbSession, business_id: int) -> bool:
-    """True if any audit for this business is still pending or running.
-
-    Mirrors ``_running_audit_id`` in api/businesses.py — we don't want the
-    scheduler to stack a second job on top of one already in flight.
-    """
+    """True if any audit for this business is still pending or running."""
     return (
         db.query(Audit.id)
         .filter(
@@ -78,63 +90,121 @@ def _has_active_audit(db: DbSession, business_id: int) -> bool:
     )
 
 
+def _cadence_days(cadence: str | None) -> int | None:
+    if cadence is None:
+        return None
+    return _CADENCE_DAYS.get(cadence)
+
+
+def _audit_count_this_week(db: DbSession, user_id: int) -> int:
+    """Mirror of ``api/audits._audit_usage_this_week`` count side.
+
+    Duplicating the SQL here (instead of importing) keeps the dispatcher
+    free of FastAPI request-cycle imports. If the rolling-window rule
+    ever changes, both call sites must update together — there's a
+    matching ``audits._audit_usage_this_week`` comment for symmetry.
+    """
+    window_start = _now_naive() - timedelta(days=7)
+    return (
+        db.query(Audit.id)
+        .join(Business, Audit.business_id == Business.id)
+        .filter(
+            Business.user_id == user_id,
+            Audit.started_at >= window_start,
+            Audit.status != AuditStatus.failed,
+        )
+        .count()
+    )
+
+
 def next_auto_audit_at(
     db: DbSession, business: Business, user: User
 ) -> datetime | None:
     """When the next auto-audit will fire for this (business, user) pair.
 
-    Returns ``None`` if the user isn't on a tier that gets auto-audits, or
-    the business is archived. Returns ``now`` (clamped to "today") when the
-    business is already past due — the next scheduler tick will pick it up.
+    Returns ``None`` when:
+      * the user isn't on a tier that gets auto-audits,
+      * the business is archived,
+      * **or the business has no cadence set** (the opt-in default).
+
+    Returns ``now`` (clamped) when the business is past due — the next
+    scheduler tick will pick it up if the user has quota.
     """
     if user.plan != UserPlan.paid:
         return None
     if business.archived_at is not None:
         return None
+    days = _cadence_days(business.audit_schedule_cadence)
+    if days is None:
+        return None
     last = _last_completed_at(db, business.id)
     if last is None:
         return _now_naive()
-    due_at = last + timedelta(days=_PAID_CADENCE_DAYS)
+    due_at = last + timedelta(days=days)
     now = _now_naive()
     return due_at if due_at > now else now
 
 
 def dispatch_due_audits() -> dict[str, int | str]:
-    """Scheduler entrypoint. Returns a small summary so the worker log shows
-    what the tick actually did.
+    """Scheduler entrypoint. Returns a small summary for the worker log.
 
-    Opens its own ``SessionLocal()`` — RQ workers are sync and never see the
-    FastAPI request-scoped session, so this function has to be self-contained.
+    Walks every non-archived paid-tier business that has a cadence set,
+    enqueues a scheduled audit if past due, skips when the user is out of
+    weekly quota or the business already has an in-flight audit. Per-user
+    quota counter is recomputed *as we go* so a user with multiple
+    overdue businesses doesn't blow past their cap in a single tick.
     """
     now = _now_naive()
     db = SessionLocal()
     enqueued: list[int] = []
     skipped_active = 0
     skipped_not_due = 0
+    skipped_no_quota = 0
     examined = 0
     try:
-        # One join + one round-trip; the dispatcher should be fast enough to
-        # run inside a single scheduler tick even at a few thousand businesses.
         rows = (
             db.query(Business, User)
             .join(User, Business.user_id == User.id)
             .filter(
                 Business.archived_at.is_(None),
+                Business.audit_schedule_cadence.is_not(None),
                 User.plan == UserPlan.paid,
             )
             .all()
         )
-        for business, _user in rows:
+
+        # Cache per-user quota usage across iterations so we don't
+        # SELECT for every row.
+        used_by_user: dict[int, int] = {}
+        limit_by_user: dict[int, int] = {}
+
+        for business, user in rows:
             examined += 1
             if _has_active_audit(db, business.id):
                 skipped_active += 1
                 continue
-            last = _last_completed_at(db, business.id)
-            if last is not None and (now - last) < timedelta(
-                days=_PAID_CADENCE_DAYS
-            ):
+            days = _cadence_days(business.audit_schedule_cadence)
+            if days is None:
+                # Defensive: filter already excluded NULL, but a typo
+                # like ``'weeky'`` would slip through with days=None.
+                # Treat as "no schedule" and skip silently.
                 skipped_not_due += 1
                 continue
+            last = _last_completed_at(db, business.id)
+            if last is not None and (now - last) < timedelta(days=days):
+                skipped_not_due += 1
+                continue
+
+            # Quota gate. Manual + scheduled share one bucket.
+            if user.id not in used_by_user:
+                used_by_user[user.id] = _audit_count_this_week(db, user.id)
+                limit_by_user[user.id] = subs_service.TIER_LIMITS[user.plan][
+                    "audits_per_week"
+                ]
+            if used_by_user[user.id] >= limit_by_user[user.id]:
+                skipped_no_quota += 1
+                continue
+
             audit = Audit(
                 business_id=business.id,
                 status=AuditStatus.pending,
@@ -145,12 +215,15 @@ def dispatch_due_audits() -> dict[str, int | str]:
             db.refresh(audit)
             enqueue_audit(audit.id)
             enqueued.append(audit.id)
+            used_by_user[user.id] += 1
+
         summary: dict[str, int | str] = {
             "examined": examined,
             "enqueued_count": len(enqueued),
             "enqueued_audit_ids": ",".join(str(i) for i in enqueued),
             "skipped_active": skipped_active,
             "skipped_not_due": skipped_not_due,
+            "skipped_no_quota": skipped_no_quota,
             "ran_at": now.isoformat(),
         }
         logger.info("auto-audit dispatch: %s", summary)

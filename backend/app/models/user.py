@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, String, func
+
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -18,6 +19,9 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    # Friendly greeting label. NULL until the user fills it in via the
+    # FTUE questionnaire; the dashboard falls back to the email-prefix.
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     magic_link_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     magic_link_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     plan: Mapped[UserPlan] = mapped_column(

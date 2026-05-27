@@ -105,6 +105,29 @@ async def audit_website(business: BusinessInput) -> SectionResult:
     if ig_handle:
         raw["instagram_handle"] = ig_handle
 
+    # IG-on-website cross-check (FTUE follow-up). When the user has a
+    # stated handle, the audit verifies that the website actually links
+    # to *that* IG profile — a missing link or a mismatched one is a
+    # real visibility issue (customers + crawlers can't follow the path
+    # from site → social). Stored as a tri-state so the sub-check
+    # renderer can speak to each case:
+    #   "linked"     → matches the stated handle ✓
+    #   "missing"    → no IG link found at all
+    #   "mismatch"   → links to a different IG handle than stated
+    #   "no_input"   → user hasn't told us their handle, can't compare
+    user_ig = (business.ig_handle or "").lstrip("@").lower() or None
+    site_ig = (ig_handle or "").lower() or None
+    if not user_ig:
+        raw["ig_link_state"] = "no_input"
+    elif site_ig is None:
+        raw["ig_link_state"] = "missing"
+    elif site_ig == user_ig:
+        raw["ig_link_state"] = "linked"
+    else:
+        raw["ig_link_state"] = "mismatch"
+        raw["ig_link_actual"] = site_ig
+        raw["ig_link_expected"] = user_ig
+
     score = _score_website(raw)
     recommendations = _recommendations(raw)
     discovered: dict[str, str | None] = {}
@@ -411,6 +434,55 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                     "3. Re-test on a phone or with Chrome DevTools' device emulator."
                 ),
                 estimated_impact="medium",
+                estimated_time="5 min",
+            )
+        )
+
+    ig_state = raw.get("ig_link_state")
+    if ig_state == "missing":
+        recs.append(
+            RecommendationDraft(
+                severity="medium",
+                title="Link your Instagram from your website",
+                body_markdown=(
+                    "**Why it matters**\n\n"
+                    "Right now there's no path from your homepage to your Instagram. Visitors "
+                    "who land via Google can't follow you, and Google itself uses cross-links "
+                    "between your site and social profiles to confirm you're a single, "
+                    "trustworthy business.\n\n"
+                    "**How to fix it**\n\n"
+                    "1. Add an Instagram icon or link in your footer (or header) pointing to "
+                    "`https://instagram.com/<your handle>`.\n"
+                    "2. Make it `<a target=\"_blank\" rel=\"noopener\">` so it opens in a new tab.\n"
+                    "3. Re-run this audit to confirm the link is detected."
+                ),
+                estimated_impact="medium",
+                estimated_time="5 min",
+            )
+        )
+    elif ig_state == "mismatch":
+        actual = raw.get("ig_link_actual") or "another account"
+        expected = raw.get("ig_link_expected") or "your handle"
+        recs.append(
+            RecommendationDraft(
+                severity="high",
+                title="Your website links to a different Instagram account",
+                body_markdown=(
+                    "**Why it matters**\n\n"
+                    f"You told us your Instagram is `@{expected}`, but your website links to "
+                    f"`@{actual}`. That's a brand-consistency problem — visitors and search "
+                    "engines now see two different identities for the same business, and "
+                    "anyone clicking the link from your site lands on the wrong profile.\n\n"
+                    "**How to fix it**\n\n"
+                    "1. Decide which handle is the right one (the one on your business cards "
+                    "and Google Maps listing is usually canonical).\n"
+                    "2. Update the link in your website's footer / header to point to that "
+                    "handle.\n"
+                    "3. If the wrong handle is actually the canonical one, update it in your "
+                    "AuditHealth profile via Edit business details.\n"
+                    "4. Re-run this audit to confirm."
+                ),
+                estimated_impact="big",
                 estimated_time="5 min",
             )
         )

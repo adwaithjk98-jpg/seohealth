@@ -10,11 +10,44 @@
     authState,
     loadCurrentUser,
     logout,
-    isPublicRoute
+    isPublicRoute,
+    updateCurrentUser,
+    greetingName
   } from '$lib/auth.svelte.js';
 
   let { children } = $props();
   let mobileMenuOpen = $state(false);
+  let nameDraft = $state('');
+  let nameSaving = $state(false);
+  let nameError = $state(/** @type {string | null} */ (null));
+
+  $effect(() => {
+    // Seed the input whenever the menu opens or the signed-in user changes.
+    if (mobileMenuOpen) {
+      nameDraft = authState.user?.display_name ?? '';
+      nameError = null;
+    }
+  });
+
+  async function handleSaveDisplayName() {
+    if (nameSaving) return;
+    const next = nameDraft.trim();
+    if ((authState.user?.display_name ?? '') === next) {
+      // No-op save — close menu without a round-trip.
+      mobileMenuOpen = false;
+      return;
+    }
+    nameSaving = true;
+    nameError = null;
+    try {
+      await updateCurrentUser({ display_name: next });
+      mobileMenuOpen = false;
+    } catch (err) {
+      nameError = err instanceof Error ? err.message : "Couldn't save your name.";
+    } finally {
+      nameSaving = false;
+    }
+  }
 
   onMount(async () => {
     if (!authState.loaded) {
@@ -49,7 +82,10 @@
 </script>
 
 <div class="min-h-screen bg-canvas">
-  <header class="sticky top-0 z-30 border-b border-canvas-soft bg-canvas/85 backdrop-blur">
+  <header
+    class="sticky top-0 z-30 border-b border-canvas-soft bg-canvas/85 backdrop-blur"
+    style="padding-top: env(safe-area-inset-top);"
+  >
     <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
       <a href="/" class="flex min-w-0 items-center gap-2">
         <span
@@ -75,12 +111,37 @@
         </span>
       </a>
 
-      <nav class="flex items-center gap-0.5 text-sm sm:gap-1">
-        <a class="btn-ghost" href="/">Home</a>
+      <nav class="flex items-center gap-1 text-sm sm:gap-1.5">
         {#if authState.user}
-          <a class="btn-ghost" href="/dashboard">Dashboard</a>
+          <!-- Dedicated home affordance. The logo top-left is also a link
+               home but reads as branding; this gives a glanceable "go to
+               workspace" target whether the user is on a deep audit
+               page, a billing page, or a single-business view. -->
+          <a
+            class="btn-ghost grid h-9 w-9 place-items-center"
+            href="/dashboard"
+            aria-label="Go to dashboard"
+            title="Dashboard"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="h-5 w-5"
+              aria-hidden="true"
+            >
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5" />
+            </svg>
+          </a>
           <a class="btn-ghost hidden sm:inline-flex" href="/billing">Billing</a>
-          <span class="hidden text-xs text-canvas-muted sm:inline">{authState.user.email}</span>
+          <span class="hidden text-xs text-canvas-muted sm:inline" title={authState.user.email}>
+            {greetingName(authState.user)}
+          </span>
           <button
             type="button"
             class="btn-ghost hidden sm:inline-flex"
@@ -105,7 +166,7 @@
                 class="grid h-7 w-7 place-items-center rounded-full bg-healthy-500 text-xs font-semibold uppercase text-white"
                 aria-hidden="true"
               >
-                {authState.user.email[0]}
+                {greetingName(authState.user)[0] || authState.user.email[0]}
               </span>
             </button>
             {#if mobileMenuOpen}
@@ -119,15 +180,37 @@
                 onclick={() => (mobileMenuOpen = false)}
               ></button>
               <div
-                class="absolute right-0 top-12 z-40 w-60 rounded-2xl border border-canvas-soft bg-white p-3 shadow-soft"
+                class="absolute right-0 top-12 z-40 w-72 rounded-2xl border border-canvas-soft bg-white p-3 shadow-soft"
                 role="menu"
                 transition:fly={{ y: -8, duration: 180, easing: quintOut }}
               >
-                <p class="px-2 text-xs uppercase tracking-wide text-canvas-muted">
-                  Signed in as
-                </p>
-                <p class="mt-0.5 truncate px-2 text-sm font-medium text-canvas-ink">
-                  {authState.user.email}
+                <label class="px-2 text-xs uppercase tracking-wide text-canvas-muted" for="display-name-input">
+                  What should we call you?
+                </label>
+                <div class="mt-1.5 flex items-center gap-2 px-2">
+                  <input
+                    id="display-name-input"
+                    type="text"
+                    bind:value={nameDraft}
+                    placeholder={greetingName(authState.user)}
+                    maxlength="120"
+                    class="flex-1 rounded-xl border border-canvas-soft bg-canvas-soft/50 px-3 py-2 text-sm text-canvas-ink placeholder:text-canvas-muted focus:border-healthy-300 focus:bg-white focus:outline-none"
+                    onkeydown={(e) => e.key === 'Enter' && handleSaveDisplayName()}
+                  />
+                  <button
+                    type="button"
+                    class="rounded-xl bg-healthy-500 px-3 py-2 text-xs font-medium text-white hover:bg-healthy-600 disabled:opacity-50"
+                    onclick={handleSaveDisplayName}
+                    disabled={nameSaving}
+                  >
+                    {nameSaving ? '…' : 'Save'}
+                  </button>
+                </div>
+                {#if nameError}
+                  <p class="mt-2 px-2 text-xs text-action-700">{nameError}</p>
+                {/if}
+                <p class="mt-2 truncate px-2 text-xs text-canvas-muted">
+                  Signed in as {authState.user.email}
                 </p>
                 <a
                   href="/billing"

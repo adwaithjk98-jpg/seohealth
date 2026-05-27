@@ -133,9 +133,10 @@
       <p class="text-5xl font-semibold tracking-tight text-canvas-ink leading-none">
         {score == null ? '—' : displayed}
       </p>
-      {#if grade}
-        <p class="mt-2 text-sm font-medium text-canvas-muted">Grade {grade}</p>
-      {/if}
+      <!-- Letter grade intentionally omitted (2026-05-27) — the
+           score + the friendly descriptor below already say everything
+           the user needs, and a giant "Grade F" overrode the whole
+           page's calm-tone framing on first contact. -->
     </div>
   </div>
   {#if friendly}

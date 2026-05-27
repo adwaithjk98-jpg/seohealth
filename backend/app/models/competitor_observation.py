@@ -18,8 +18,13 @@ class CompetitorObservation(Base):
     competitor_id: Mapped[int] = mapped_column(
         ForeignKey("competitors.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    audit_id: Mapped[int] = mapped_column(
-        ForeignKey("audits.id", ondelete="CASCADE"), index=True, nullable=False
+    # Nullable since 2026-05-26 — the weekly ``competitor_refresh`` cron
+    # now writes observation rows independent of any user audit (so
+    # competitor trend points keep landing even in weeks the user
+    # doesn't run an audit). Rows from the legacy in-audit path still
+    # carry a real ``audit_id``; cron-written rows carry ``NULL``.
+    audit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audits.id", ondelete="CASCADE"), index=True, nullable=True
     )
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     review_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

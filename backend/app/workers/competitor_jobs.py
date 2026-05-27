@@ -25,26 +25,81 @@ import logging
 from datetime import datetime, timezone
 
 from app.db import SessionLocal
-from app.models import Business, Competitor, DiscoveryScan
+from app.models import Business, Competitor, CompetitorObservation, DiscoveryScan
 from app.models.enums import DiscoveryScanStatus
-from app.services.competitor_cache import upsert_metric_cache
+from app.services.competitor_cache import normalize_maps_url, upsert_metric_cache
 from app.services.competitor_scraper_adapter import (
     CompetitorScraperError,
     run_competitor_scrape,
 )
-from scrapers import fetch_competitor_metrics
+from scrapers import audit_instagram, fetch_competitor_metrics
+from scrapers.types import BusinessInput
 
 logger = logging.getLogger(__name__)
 
 
-def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | None]:
-    """Scrape one URL with Selenium and UPSERT the cache row.
+def _ig_handle_from_url(url: str | None) -> str | None:
+    """Extract an Instagram handle from a profile URL.
 
-    Returns a small dict so the RQ result store and log show what actually
-    landed (rating + review_count + any error). Designed to never raise on
-    a normal scrape failure — the cache row's ``last_error`` column records
-    that for diagnostics. Only infrastructure errors (DB down) bubble up so
-    RQ retries / dead-letters them.
+    ``https://www.instagram.com/brewmorphia/?utm_source=…`` → ``brewmorphia``.
+    Returns None for anything that doesn't look like an instagram.com URL
+    (e.g. the user pasted a Facebook link by mistake).
+    """
+    if not url:
+        return None
+    lower = url.lower()
+    if "instagram.com/" not in lower:
+        return None
+    tail = url.split("instagram.com/", 1)[1]
+    tail = tail.split("?", 1)[0].split("#", 1)[0].strip("/").strip()
+    # Strip any sub-paths (``/reel/...``, ``/p/...``); we want the handle only.
+    handle = tail.split("/", 1)[0]
+    return handle.lstrip("@") or None
+
+
+async def _ig_metrics_for_url(url: str | None) -> tuple[int | None, int | None]:
+    """Pull ``(followers, post_count)`` for a competitor's IG URL.
+
+    Reuses ``scrapers.audit_instagram`` so we don't reimplement the
+    og:description parsing. Returns ``(None, None)`` on any failure
+    (no handle, profile gated, parse miss) — the caller writes those
+    as null observation fields without aborting the surrounding refresh.
+    """
+    handle = _ig_handle_from_url(url)
+    if not handle:
+        return None, None
+    try:
+        result = await audit_instagram(
+            BusinessInput(name="competitor", city="", country="", ig_handle=handle)
+        )
+        raw = result.raw_data or {}
+        followers = raw.get("followers")
+        posts = raw.get("post_count")
+        return (
+            int(followers) if isinstance(followers, (int, float)) else None,
+            int(posts) if isinstance(posts, (int, float)) else None,
+        )
+    except Exception:
+        logger.exception("ig scrape failed for url=%r", url)
+        return None, None
+
+
+def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | None]:
+    """Refresh one Maps URL: scrape, UPSERT cache, write observation rows.
+
+    This is the weekly competitor-data tick. Previously it only updated
+    the global ``CompetitorMetricCache`` (per-URL dedup across users) —
+    as of 2026-05-26 it also writes one ``CompetitorObservation`` row
+    per active competitor on this URL, so the trend chart picks up a
+    new point each week independent of any user-triggered audit. IG
+    follower/post counts are scraped per-competitor too when the row
+    has an ``instagram_url`` on file (Maps URL is one-to-many with
+    Competitor rows; IG handles can differ across users tracking the
+    same listing, so we scrape per row).
+
+    Designed to never raise on a normal scrape failure — failed bits
+    land in the cache row's ``last_error`` column or as null
+    observation fields. Only infrastructure errors (DB down) bubble.
     """
     db = SessionLocal()
     try:
@@ -56,11 +111,45 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
             return {"cache_key": cache_key, "status": "no_result"}
         metric = metrics[0]
         upsert_metric_cache(db, cache_key, maps_url, metric)
+
+        # Find every active Competitor row that maps to this cache_key.
+        # We can't normalize in SQL portably; load active rows and filter.
+        matching: list[Competitor] = []
+        for c in (
+            db.query(Competitor)
+            .filter(
+                Competitor.archived_at.is_(None),
+                Competitor.maps_url.is_not(None),
+            )
+            .all()
+        ):
+            if normalize_maps_url(c.maps_url or "") == cache_key:
+                matching.append(c)
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        obs_written = 0
+        for comp in matching:
+            ig_followers, ig_posts = asyncio.run(
+                _ig_metrics_for_url(comp.instagram_url)
+            )
+            db.add(
+                CompetitorObservation(
+                    competitor_id=comp.id,
+                    audit_id=None,  # cron-written, not tied to a user audit
+                    rating=metric.rating,
+                    review_count=metric.review_count,
+                    instagram_followers=ig_followers,
+                    instagram_posts=ig_posts,
+                    observed_at=now,
+                )
+            )
+            obs_written += 1
         db.commit()
         return {
             "cache_key": cache_key,
             "rating": metric.rating,
             "review_count": metric.review_count,
+            "observations_written": obs_written,
             "error": metric.error,
         }
     finally:

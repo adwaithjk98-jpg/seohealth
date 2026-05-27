@@ -7,12 +7,18 @@ from sqlalchemy.orm import Session
 from app.auth_deps import current_user
 from app.db import get_db
 from app.models import Audit, Business, User
-from app.models.enums import AuditStatus
-from app.schemas.business import BusinessCreateRequest, BusinessResponse
+from app.models.enums import AuditStatus, UserPlan
+from app.schemas.business import (
+    BusinessCreateRequest,
+    BusinessProfileUpdateRequest,
+    BusinessResponse,
+    BusinessScheduleRequest,
+)
 from app.services import subscriptions as subs_service
 from app.services.audit_summary import grade_from_score
 from app.services.audit_view import TREND_THRESHOLD
 from app.services.auto_audit import next_auto_audit_at
+from app.services.pillar_optout import enabled_pillars
 
 router = APIRouter()
 
@@ -28,14 +34,19 @@ def _trend(current: int | None, previous: int | None) -> str | None:
     return "flat"
 
 
-def _audit_overall_score(audit: Audit) -> int | None:
-    # Skip failed sections — same rule as audit_runner + audit_view, so the
-    # tile score on the dashboard matches the overall the user just saw on
-    # the live-completion screen.
+def _audit_overall_score(audit: Audit, business: Business) -> int | None:
+    # Match audit_runner + audit_view: failed sections still contribute
+    # their persisted score (typically 0) so the dashboard tile matches
+    # the overall the user saw on the live-completion screen, and
+    # half-empty audits don't round up by silently excluding gaps. On
+    # top of that, opted-out pillars (FTUE questionnaire) drop out of
+    # the average — a website-less café isn't scored as if a 0/100
+    # website pillar were dragging them down.
+    enabled = enabled_pillars(business)
     scores = [
         s.score
         for s in audit.sections
-        if s.score is not None and s.status.value != "failed"
+        if s.score is not None and s.section.value in enabled
     ]
     return round(sum(scores) / len(scores)) if scores else None
 
@@ -78,8 +89,8 @@ def _to_response(db: Session, b: Business, user: User) -> BusinessResponse:
     completed = _latest_two_completed(db, b.id)
     latest = completed[0] if completed else None
     prev = completed[1] if len(completed) > 1 else None
-    latest_score = _audit_overall_score(latest) if latest else None
-    prev_score = _audit_overall_score(prev) if prev else None
+    latest_score = _audit_overall_score(latest, b) if latest else None
+    prev_score = _audit_overall_score(prev, b) if prev else None
     return BusinessResponse(
         id=b.id,
         name=b.name,
@@ -95,7 +106,11 @@ def _to_response(db: Session, b: Business, user: User) -> BusinessResponse:
         latest_audit_id=latest.id if latest else None,
         latest_audit_finished_at=latest.finished_at if latest else None,
         running_audit_id=_running_audit_id(db, b.id),
+        audit_schedule_cadence=b.audit_schedule_cadence,
         next_auto_audit_at=next_auto_audit_at(db, b, user),
+        business_type=b.business_type,
+        has_website=b.has_website,
+        has_instagram=b.has_instagram,
     )
 
 
@@ -173,6 +188,12 @@ def create_business(
         maps_url=maps_url,
         website=website,
         ig_handle=ig_handle,
+        # FTUE answers, all nullable. Defaults fall through to NULL
+        # when the caller is a legacy script that doesn't send them —
+        # the dashboard banner picks those up and prompts the user.
+        business_type=payload.business_type,
+        has_website=payload.has_website,
+        has_instagram=payload.has_instagram,
     )
     db.add(business)
     db.commit()
@@ -193,6 +214,18 @@ def list_businesses(
         .all()
     )
     return [_to_response(db, b, user) for b in rows]
+
+
+@router.get("/businesses/{business_id}", response_model=BusinessResponse)
+def get_business(
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> BusinessResponse:
+    biz = db.get(Business, business_id)
+    if biz is None or biz.user_id != user.id or biz.archived_at is not None:
+        raise HTTPException(status_code=404, detail="business not found")
+    return _to_response(db, biz, user)
 
 
 @router.delete(
@@ -222,3 +255,74 @@ def archive_business(
         biz.archived_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
+    "/businesses/{business_id}/schedule",
+    response_model=BusinessResponse,
+)
+def set_business_schedule(
+    business_id: int,
+    payload: BusinessScheduleRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> BusinessResponse:
+    """Set or clear the auto-audit cadence for one of the user's businesses.
+
+    Payload: ``{"cadence": "weekly" | "biweekly" | "monthly" | null}``.
+    Null clears the schedule (opt-out). Validated by the schema.
+
+    Paid-tier-gated — auto-audits are a paid feature. Free users hit
+    402 and can't enable a schedule even if they hand-craft a request.
+    The dispatcher itself defends against this anyway (only paid users
+    are walked), but rejecting at the API saves the user a confused
+    "I scheduled it but nothing happened" loop.
+    """
+    biz = db.get(Business, business_id)
+    if biz is None or biz.user_id != user.id or biz.archived_at is not None:
+        raise HTTPException(status_code=404, detail="business not found")
+    if user.plan != UserPlan.paid and payload.cadence is not None:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "schedule_paid_only",
+                "message": "Scheduled audits are a paid-tier feature. Upgrade to enable a schedule.",
+                "tier": user.plan.value,
+            },
+        )
+    biz.audit_schedule_cadence = payload.cadence
+    db.commit()
+    db.refresh(biz)
+    return _to_response(db, biz, user)
+
+
+@router.patch(
+    "/businesses/{business_id}/profile",
+    response_model=BusinessResponse,
+)
+def update_business_profile(
+    business_id: int,
+    payload: BusinessProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> BusinessResponse:
+    """FTUE questionnaire writes — ``business_type`` and the
+    ``has_website`` / ``has_instagram`` opt-out flags.
+
+    Only non-NULL fields in the payload are applied, so the dashboard
+    banner can patch one answer at a time without resetting the others.
+    Re-enabling a pillar (``has_website=true`` after a previous False)
+    is allowed; the next audit picks the pillar back up automatically.
+    """
+    biz = db.get(Business, business_id)
+    if biz is None or biz.user_id != user.id or biz.archived_at is not None:
+        raise HTTPException(status_code=404, detail="business not found")
+    if payload.business_type is not None:
+        biz.business_type = payload.business_type
+    if payload.has_website is not None:
+        biz.has_website = payload.has_website
+    if payload.has_instagram is not None:
+        biz.has_instagram = payload.has_instagram
+    db.commit()
+    db.refresh(biz)
+    return _to_response(db, biz, user)

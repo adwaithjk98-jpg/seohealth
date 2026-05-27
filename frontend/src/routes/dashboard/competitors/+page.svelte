@@ -391,20 +391,25 @@
           <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
             My competitors
           </h2>
-          <p class="mt-0.5 text-sm text-canvas-ink">
-            <span class="font-semibold">{competitors.length}</span>{competitorLimit > 0
-              ? `/${competitorLimit}`
-              : ''}
-            <span class="text-canvas-muted">added</span>
-            {#if atCap}
+          <!-- ``X/Y added`` framing pressures users who are nowhere near the
+               cap (a fresh paid user with 1 competitor reads "1/4" as
+               "missing out on 3"). Only surface the count when we're
+               actually at the cap, where it gives useful context for
+               the "Limit reached" pill. Below cap = a single ``+`` is
+               enough affordance. -->
+          {#if atCap}
+            <p class="mt-0.5 text-sm text-canvas-ink">
+              <span class="font-semibold">{competitors.length}</span><span class="text-canvas-muted"
+                >/{competitorLimit} added</span
+              >
               <span
                 class="ml-2 inline-flex items-center gap-1 rounded-full bg-attention-100 px-2 py-0.5 text-xs font-medium text-attention-700"
               >
                 <span class="h-1.5 w-1.5 rounded-full bg-attention-500"></span>
                 At plan limit
               </span>
-            {/if}
-          </p>
+            </p>
+          {/if}
         </div>
         <div class="flex gap-2">
           {#if atCap}
@@ -485,7 +490,7 @@
                       class="inline-flex items-center gap-1 rounded-full bg-canvas-soft px-2 py-0.5 text-xs font-medium text-canvas-muted"
                     >
                       <span class="h-1.5 w-1.5 rounded-full bg-canvas-muted/60"></span>
-                      Awaiting next audit
+                      Awaiting next refresh
                     </span>
                   {:else}
                     <span

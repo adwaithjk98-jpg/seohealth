@@ -27,6 +27,12 @@ class RecommendationDraft:
     body_markdown: str
     estimated_impact: str | None = None
     estimated_time: str | None = None
+    # Which pillar the user would actually *edit* to fix this finding.
+    # Usually equals the emitting scraper's section (a Maps finding →
+    # ``fix_target='maps'``), but cross-pillar NAP findings can target
+    # a specific source: "missing IG handle" → ``fix_target='instagram'``.
+    # Lets the read path drop recs whose target is an opted-out pillar.
+    fix_target: str | None = None
 
 
 @dataclass

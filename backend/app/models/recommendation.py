@@ -38,5 +38,13 @@ class Recommendation(Base):
         nullable=False,
     )
     marked_done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Which pillar the user would *act on* to fix this. Usually equals
+    # ``section`` (a Maps finding → fix in Maps), but cross-pillar NAP
+    # findings can target a specific source ("missing phone on
+    # Instagram" → target=instagram). The read path filters out recs
+    # whose target is an opted-out pillar so the Top-3 list and the
+    # section drill-down don't suggest fixes on channels the business
+    # explicitly said it doesn't use.
+    fix_target: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     audit: Mapped["Audit"] = relationship(back_populates="recommendations")

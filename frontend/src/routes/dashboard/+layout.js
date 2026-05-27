@@ -1,10 +1,11 @@
-// Audit tab loader. We need the user's businesses to:
-//   - Render the "Run manual audit" picker.
-//   - Read each business's `next_auto_audit_at` for the Scheduled panel.
+// Single fetch for /api/businesses shared across the Overview, Audit, and
+// Competitors tabs. Each child page's data automatically merges the parent
+// loader's output, so tab-switches no longer pay a fresh round-trip just
+// to re-read the same business list.
 //
-// Quota is a separate fetch from a +page.svelte effect (and re-fetched
-// after a successful audit-start) so it stays fresh without forcing a
-// full loader re-run.
+// If a child needs additional data (e.g. /dashboard/competitors fans out
+// for competitors), it stays in that page's own +page.js and reads
+// businesses via ``await parent()``.
 
 /** @type {import('@sveltejs/kit').Load} */
 export async function load({ fetch }) {

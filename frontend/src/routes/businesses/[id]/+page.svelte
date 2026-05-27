@@ -6,7 +6,13 @@
   import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
-  import { getLatestAuditForBusiness, startAudit, archiveBusiness } from '$lib/api.js';
+  import {
+    getLatestAuditForBusiness,
+    startAudit,
+    archiveBusiness,
+    setBusinessSchedule,
+    getBusiness
+  } from '$lib/api.js';
   import {
     scoreEncouragement,
     severityLabel,
@@ -18,6 +24,7 @@
   import SectionCard from '$lib/components/SectionCard.svelte';
   import CompetitorsSection from '$lib/components/CompetitorsSection.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
+  import BusinessProfileBanner from '$lib/components/BusinessProfileBanner.svelte';
 
   // /businesses/{id} is the canonical, audit-id-independent dashboard URL
   // (m6/s5). Bookmarks here survive every re-audit — they always resolve
@@ -27,6 +34,7 @@
   const businessId = $derived(parseInt($page.params.id ?? '', 10));
 
   let audit = $state(/** @type {any} */ (null));
+  let business = $state(/** @type {any} */ (null));
   let status = $state(/** @type {'loading' | 'ready' | 'no_audit' | 'error'} */ ('loading'));
   let errorMessage = $state(/** @type {string | null} */ (null));
   let reauditing = $state(false);
@@ -39,22 +47,48 @@
       return;
     }
 
-    try {
-      audit = await getLatestAuditForBusiness(businessId);
+    // Fetch the audit + the business row in parallel. The business row
+    // carries the scheduling fields (audit_schedule_cadence /
+    // next_auto_audit_at) that the audit-detail payload doesn't, and we
+    // need them in both the ``ready`` and ``no_audit`` branches.
+    const [auditResult, businessResult] = await Promise.allSettled([
+      getLatestAuditForBusiness(businessId),
+      getBusiness(businessId)
+    ]);
+
+    if (businessResult.status === 'fulfilled') {
+      business = businessResult.value;
+    }
+
+    if (auditResult.status === 'fulfilled') {
+      audit = auditResult.value;
       status = 'ready';
-    } catch (err) {
-      // 404 here is both "no completed audit yet" and "business not yours"
-      // — we render the same affordance for the user-visible case.
-      if (err?.status === 404) {
-        status = 'no_audit';
+      return;
+    }
+
+    const err = auditResult.reason;
+    if (err?.status === 404) {
+      // No completed audit yet — but if we also couldn't load the
+      // business itself, the id is bogus / not ours.
+      if (businessResult.status === 'rejected') {
+        status = 'error';
+        errorMessage = 'Could not load this business.';
         return;
       }
-      status = 'error';
-      errorMessage = err instanceof Error ? err.message : 'Could not load this business.';
+      status = 'no_audit';
+      return;
     }
+    status = 'error';
+    errorMessage = err instanceof Error ? err.message : 'Could not load this business.';
   });
 
-  const sections = $derived(audit?.sections ?? []);
+  // Filter opted-out pillars (FTUE questionnaire) out of the grid. The
+  // backend already excludes them from ``overall_score``; this just
+  // hides the card. Sections without an ``enabled`` flag — older audit
+  // payloads, before the field was added — default to visible.
+  const sections = $derived(
+    (audit?.sections ?? []).filter((/** @type {any} */ s) => s.enabled !== false)
+  );
   const top3 = $derived(topOpenRecommendations(sections, 3));
   const totalOpen = $derived(audit?.open_recommendations_count ?? 0);
   const totalDone = $derived(audit?.done_recommendations_count ?? 0);
@@ -70,6 +104,52 @@
   let archiving = $state(false);
   let archiveError = $state(/** @type {string | null} */ (null));
   let confirmingArchive = $state(false);
+
+  // Auto-audit schedule — paid-only. Backend rejects free-tier writes
+  // with 402 (api/businesses.set_business_schedule); we also gate the
+  // UI so free users can't kick off a doomed request.
+  const isPaid = $derived(tier === 'paid');
+  const cadence = $derived(business?.audit_schedule_cadence ?? null);
+  const nextAuditAt = $derived(business?.next_auto_audit_at ?? null);
+  let scheduleSaving = $state(/** @type {string | null} */ (null));
+  let scheduleError = $state(/** @type {string | null} */ (null));
+
+  /** @param {'weekly' | 'biweekly' | 'monthly' | null} next */
+  async function handleSetSchedule(next) {
+    if (!business?.id || scheduleSaving) return;
+    if (cadence === next) return;
+    scheduleSaving = next ?? 'off';
+    scheduleError = null;
+    try {
+      business = await setBusinessSchedule(business.id, next);
+    } catch (err) {
+      scheduleError = err instanceof Error ? err.message : 'Could not save your schedule.';
+    } finally {
+      scheduleSaving = null;
+    }
+  }
+
+  /** Format a UTC-naive ISO from the backend as a friendly day label.
+   *  Mirrors the dashboard's ``formatAuditDate``.
+   *  @param {string | null | undefined} value */
+  function formatScheduleDate(value) {
+    if (!value) return null;
+    const iso = /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  }
+
+  const cadenceOptions = /** @type {const} */ ([
+    { value: null, label: 'Off' },
+    { value: 'weekly', label: 'Weekly' },
+    { value: 'biweekly', label: 'Bi-weekly' },
+    { value: 'monthly', label: 'Monthly' }
+  ]);
 
   async function handleArchive() {
     if (!audit?.business?.id || archiving) return;
@@ -133,6 +213,88 @@
   }
 </script>
 
+{#snippet scheduleCard()}
+  <section class="card border border-canvas-soft bg-white p-5 sm:p-6" aria-labelledby="schedule-heading">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p id="schedule-heading" class="text-sm font-semibold text-canvas-ink">
+          Auto-audit schedule
+        </p>
+        <p class="mt-1 text-xs text-canvas-muted">
+          Re-check this business on a cadence and email you when the score moves.
+        </p>
+      </div>
+      {#if isPaid && cadence}
+        <span
+          class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-healthy-50 px-2.5 py-0.5 text-xs font-medium text-healthy-700"
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+          On · {cadence}
+        </span>
+      {/if}
+    </div>
+
+    <div
+      role="radiogroup"
+      aria-label="Audit cadence"
+      class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"
+    >
+      {#each cadenceOptions as opt}
+        {@const selected = cadence === opt.value}
+        {@const saving = scheduleSaving === (opt.value ?? 'off')}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          disabled={!isPaid || scheduleSaving !== null}
+          onclick={() => handleSetSchedule(opt.value)}
+          class={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+            selected
+              ? 'border-healthy-300 bg-healthy-50 text-healthy-700'
+              : 'border-canvas-soft bg-white text-canvas-ink hover:border-canvas-muted/40'
+          } ${!isPaid ? 'cursor-not-allowed opacity-60' : ''}`}
+        >
+          {saving ? 'Saving…' : opt.label}
+        </button>
+      {/each}
+    </div>
+
+    {#if isPaid}
+      <p class="mt-3 text-xs text-canvas-muted">
+        {#if cadence && nextAuditAt}
+          Next auto-audit on
+          <span class="font-medium text-canvas-ink">{formatScheduleDate(nextAuditAt)}</span>.
+          Scheduled audits share your weekly audit quota.
+        {:else if cadence}
+          Schedule saved — we'll fit the first run into your weekly quota.
+        {:else}
+          Off — we'll only re-check this business when you ask us to.
+        {/if}
+      </p>
+    {:else}
+      <div
+        class="mt-3 flex flex-col gap-2 rounded-xl border border-attention-100 bg-attention-50/70 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between"
+      >
+        <p class="text-canvas-ink">
+          <span class="font-medium">Scheduling is a paid feature.</span>
+          Upgrade to let us re-check this business automatically.
+        </p>
+        <a class="btn-primary text-xs" href="/billing">Upgrade</a>
+      </div>
+    {/if}
+
+    {#if scheduleError}
+      <p
+        class="mt-3 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700"
+        in:fade={{ duration: 180 }}
+        role="alert"
+      >
+        {scheduleError}
+      </p>
+    {/if}
+  </section>
+{/snippet}
+
 {#if status === 'loading'}
   <section class="space-y-10" aria-busy="true" aria-live="polite">
     <span class="sr-only">Loading your latest health check…</span>
@@ -163,8 +325,14 @@
     </div>
   </section>
 {:else if status === 'no_audit'}
-  <section class="mx-auto mt-10 max-w-md text-center" in:fade={{ duration: 240 }}>
-    <div class="card p-6 sm:p-8">
+  <section class="mx-auto mt-10 max-w-md space-y-6" in:fade={{ duration: 240 }}>
+    {#if business}
+      <BusinessProfileBanner
+        {business}
+        onUpdated={(/** @type {any} */ next) => (business = next)}
+      />
+    {/if}
+    <div class="card p-6 text-center sm:p-8">
       <p class="text-3xl">🪴</p>
       <h1 class="mt-3 text-lg font-semibold text-canvas-ink">No health check yet</h1>
       <p class="mt-2 text-sm text-canvas-muted">
@@ -187,6 +355,10 @@
         <p class="mt-3 text-xs text-action-700">{archiveError}</p>
       {/if}
     </div>
+
+    {#if business}
+      {@render scheduleCard()}
+    {/if}
   </section>
 {:else if status === 'error'}
   <section class="mx-auto mt-10 max-w-2xl text-center" in:fade={{ duration: 240 }}>
@@ -212,6 +384,13 @@
   </section>
 {:else if audit}
   <section class="space-y-10">
+    {#if business}
+      <BusinessProfileBanner
+        {business}
+        onUpdated={(/** @type {any} */ next) => (business = next)}
+      />
+    {/if}
+
     <header class="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
       <div>
         <p
@@ -326,6 +505,10 @@
         {tier}
         {competitorLimit}
       />
+    {/if}
+
+    {#if business}
+      {@render scheduleCard()}
     {/if}
 
     <footer

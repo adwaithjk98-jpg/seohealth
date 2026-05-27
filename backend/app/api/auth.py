@@ -1,7 +1,7 @@
 import re
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session as DbSession
 
 from app.schemas.subscription import (
@@ -45,10 +45,20 @@ class MeResponse(BaseModel):
     id: int
     email: str
     plan: str
+    # Friendly greeting label. NULL until the user fills the FTUE
+    # questionnaire; the frontend falls back to the email-prefix.
+    display_name: str | None = None
     # Phase 3 — subscription tier + hard caps + most-recent subscription row,
     # so the SPA can render Billing state and gate "Add business" without a
     # second round-trip.
     subscription_state: SubscriptionState | None = None
+
+
+class UpdateMeBody(BaseModel):
+    """PATCH /auth/me payload. Only fields the user can self-update —
+    no plan, no email, no admin knobs."""
+
+    display_name: str | None = Field(default=None, max_length=120)
 
 
 def _build_me_response(db: DbSession, user: User) -> "MeResponse":
@@ -76,6 +86,7 @@ def _build_me_response(db: DbSession, user: User) -> "MeResponse":
         id=user.id,
         email=user.email,
         plan=user.plan.value,
+        display_name=user.display_name,
         subscription_state=state,
     )
 
@@ -174,6 +185,25 @@ def me(
     db: DbSession = Depends(get_db),
     user: User = Depends(current_user),
 ) -> MeResponse:
+    return _build_me_response(db, user)
+
+
+@router.patch("/auth/me", response_model=MeResponse)
+def update_me(
+    payload: UpdateMeBody,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> MeResponse:
+    """Self-update for user-editable fields. Today: ``display_name`` only.
+
+    Empty string is treated as "clear the name" → stored as NULL so the
+    frontend falls back to the email-prefix again.
+    """
+    if payload.display_name is not None:
+        cleaned = payload.display_name.strip()
+        user.display_name = cleaned or None
+    db.commit()
+    db.refresh(user)
     return _build_me_response(db, user)
 
 

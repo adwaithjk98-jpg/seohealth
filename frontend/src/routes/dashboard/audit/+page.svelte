@@ -83,6 +83,54 @@
     }
   }
 
+  // --- Audit all ---
+  // Eligible = no audit currently in flight for that business. We
+  // skip businesses with ``running_audit_id`` so the bulk action
+  // doesn't 409 the user on rows that are already mid-audit.
+  const auditAllEligible = $derived(
+    /** @type {any[]} */ (businesses).filter(
+      (/** @type {any} */ b) => !b.running_audit_id
+    )
+  );
+  const auditAllCost = $derived(auditAllEligible.length);
+  // Won't burn through quota partially — only run when the user has
+  // enough slots for all eligible businesses. Saves the awkward
+  // "audited 2 of 3, the third failed with 429" UX.
+  const canAuditAll = $derived(
+    quota != null && auditAllCost > 0 && quota.remaining >= auditAllCost
+  );
+
+  let auditAllRunning = $state(false);
+  let auditAllError = $state(/** @type {string | null} */ (null));
+
+  async function handleAuditAll() {
+    if (!canAuditAll || auditAllRunning) return;
+    auditAllRunning = true;
+    auditAllError = null;
+    try {
+      // Sequential, not parallel — the worker pool runs one job at a
+      // time anyway, and serial keeps the per-row UI state honest as
+      // each enqueue settles.
+      for (const biz of auditAllEligible) {
+        runState = { ...runState, [biz.id]: 'starting' };
+        runError = { ...runError, [biz.id]: '' };
+        try {
+          await startAudit(biz.id);
+        } catch (err) {
+          runError = {
+            ...runError,
+            [biz.id]: err instanceof Error ? err.message : 'Could not start audit.'
+          };
+          runState = { ...runState, [biz.id]: 'idle' };
+        }
+      }
+      await loadQuota();
+      await invalidateAll();
+    } finally {
+      auditAllRunning = false;
+    }
+  }
+
   // --- Scheduled panel data ---
   // Auto-audits are paid-only (see services/auto_audit.py). Each
   // business has `next_auto_audit_at` set by the scheduler when active.
@@ -116,8 +164,8 @@
       Audits
     </h1>
     <p class="mt-2 max-w-2xl text-sm leading-relaxed text-canvas-muted">
-      Run a fresh health check on any of your businesses, or let us auto-audit weekly so you
-      never miss a slip.
+      Run a fresh health check on any of your businesses, or set a schedule on each one so we
+      keep checking in the background.
     </p>
   </header>
 
@@ -155,7 +203,7 @@
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">
-            Manual audits this week
+            Audits this week
           </p>
           {#if quota}
             <p class="mt-2 flex items-baseline gap-1.5 text-canvas-ink">
@@ -223,17 +271,66 @@
       {/if}
     </section>
 
-    <!-- ===== Run a manual audit ===== -->
+    <!-- ===== Run an audit ===== -->
     <section class="space-y-3">
-      <div class="flex items-end justify-between">
+      <div class="flex flex-wrap items-end justify-between gap-3">
         <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
-          Run a manual audit
+          Run an audit
         </h2>
         <span class="text-xs text-canvas-muted">
           {businesses.length}
           {businesses.length === 1 ? 'business' : 'businesses'}
         </span>
       </div>
+
+      <!-- Audit-all action: only meaningful with 2+ businesses (the
+           single-business case is just the per-row Run button below).
+           The button copy is exact about how many slots will get used
+           — no surprise 429s, no ambiguous "audit everything?" -->
+      {#if businesses.length > 1}
+        <div
+          class="card flex flex-col gap-2 border-healthy-100 bg-healthy-50/40 p-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-canvas-ink">
+              Audit all {auditAllEligible.length}
+              {auditAllEligible.length === 1 ? 'business' : 'businesses'} at once
+            </p>
+            <p class="mt-0.5 text-xs text-canvas-muted">
+              {#if !canAuditAll && quota}
+                Needs {auditAllCost} of your {quota.remaining} remaining audit
+                {quota.remaining === 1 ? 'slot' : 'slots'} — not enough room this week.
+              {:else if auditAllCost > 0}
+                Will use {auditAllCost} of your {quota?.remaining ?? '—'} remaining audit
+                {auditAllCost === 1 ? 'slot' : 'slots'}.
+              {:else}
+                All businesses already have an audit in flight.
+              {/if}
+            </p>
+            {#if auditAllError}
+              <p class="mt-1 text-xs text-action-700">{auditAllError}</p>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="btn-primary whitespace-nowrap"
+            onclick={handleAuditAll}
+            disabled={!canAuditAll || auditAllRunning}
+          >
+            {#if auditAllRunning}
+              <span class="inline-flex items-center gap-2">
+                <span
+                  class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                  aria-hidden="true"
+                ></span>
+                Starting all…
+              </span>
+            {:else}
+              ↻ Audit all
+            {/if}
+          </button>
+        </div>
+      {/if}
 
       <ul class="space-y-3">
         {#each businesses as biz, i (biz.id)}
@@ -331,11 +428,11 @@
             </div>
             <div class="min-w-0">
               <p class="text-sm font-semibold tracking-tight text-canvas-ink">
-                Auto-audits run weekly
+                Scheduled audits
               </p>
               <p class="mt-1 text-xs leading-relaxed text-canvas-muted">
-                We quietly re-check each of your businesses every 7 days and email you only
-                when the score moves meaningfully. Nothing to configure — it's already on.
+                Pick a cadence on each business and we'll re-check it on that rhythm, sharing
+                your weekly audit quota. Set or change a schedule from the business page.
               </p>
             </div>
           </div>
@@ -347,8 +444,15 @@
                   class="flex items-center justify-between gap-3 rounded-xl border border-canvas-soft bg-white px-4 py-3 text-sm"
                 >
                   <div class="min-w-0">
-                    <p class="truncate font-medium text-canvas-ink">{biz.name}</p>
-                    <p class="text-xs text-canvas-muted">{biz.city}</p>
+                    <a
+                      href={`/businesses/${biz.id}`}
+                      class="truncate font-medium text-canvas-ink hover:text-healthy-700"
+                    >
+                      {biz.name}
+                    </a>
+                    <p class="text-xs text-canvas-muted">
+                      {biz.city}{#if biz.audit_schedule_cadence} · {biz.audit_schedule_cadence}{/if}
+                    </p>
                   </div>
                   <p class="shrink-0 text-xs text-canvas-muted">
                     Next: {formatReset(biz.next_auto_audit_at)}
@@ -356,6 +460,11 @@
                 </li>
               {/each}
             </ul>
+          {:else}
+            <p class="mt-5 rounded-xl border border-canvas-soft bg-canvas-soft/40 px-4 py-3 text-xs text-canvas-muted">
+              No businesses are on a schedule yet. Open one from the dashboard and pick a cadence —
+              weekly, bi-weekly, or monthly.
+            </p>
           {/if}
         </div>
       {:else}
@@ -373,11 +482,11 @@
               </div>
               <div class="min-w-0">
                 <p class="text-sm font-semibold tracking-tight text-canvas-ink">
-                  Auto-audits run weekly
+                  Scheduled audits
                 </p>
                 <p class="mt-1 text-xs leading-relaxed text-canvas-muted">
-                  We quietly re-check each of your businesses every 7 days and email you only
-                  when the score moves meaningfully.
+                  Set a weekly, bi-weekly, or monthly cadence on each business and we'll
+                  re-check it for you on that rhythm.
                 </p>
               </div>
             </div>
@@ -387,9 +496,9 @@
               >
                 <div>
                   <p class="font-medium text-canvas-ink">Your business · Calicut</p>
-                  <p class="text-xs text-canvas-muted">Sample preview</p>
+                  <p class="text-xs text-canvas-muted">Sample preview · weekly</p>
                 </div>
-                <p class="text-xs text-canvas-muted">Next: every 7 days</p>
+                <p class="text-xs text-canvas-muted">Next: in 7 days</p>
               </li>
             </ul>
           </div>
@@ -405,11 +514,11 @@
               🔒
             </div>
             <p class="text-sm font-semibold tracking-tight text-canvas-ink">
-              Auto-audits are a paid feature
+              Scheduled audits are a paid feature
             </p>
             <p class="max-w-sm text-xs text-canvas-muted">
-              Upgrade and we'll watch each business automatically — you only hear from us
-              when your score moves.
+              Upgrade and pick a cadence on each business — we'll re-check it on that
+              rhythm and email you only when the score moves.
             </p>
             <a class="btn-primary mt-1" href="/billing">Upgrade to unlock</a>
           </div>

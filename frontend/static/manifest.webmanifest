@@ -1,0 +1,19 @@
+{
+  "name": "Local SEO Health Monitor",
+  "short_name": "AuditHealth",
+  "description": "A calm dashboard for your business's online presence.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf8f4",
+  "theme_color": "#faf8f4",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

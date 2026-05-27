@@ -7,7 +7,8 @@
   import {
     severityLabel,
     severityTone,
-    impactLabel
+    impactLabel,
+    difficultyLabel
   } from '$lib/dashboard.js';
   import { splitRecommendationBody, renderMarkdown } from '$lib/markdown.js';
   import SuccessBurst from './SuccessBurst.svelte';
@@ -221,7 +222,7 @@
             Difficulty
           </p>
           <p class="mt-1 text-sm font-medium text-canvas-ink">
-            {recommendation?.estimated_time === 'professional help' ? 'Get a hand' : 'Beginner-friendly'}
+            {difficultyLabel(recommendation?.estimated_time)}
           </p>
         </div>
       </section>

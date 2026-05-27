@@ -257,8 +257,13 @@
       </div>
     </div>
   {:else if !hasAnyPoint}
-    <div class="absolute inset-x-0 bottom-6 text-center text-xs text-canvas-muted">
-      We'll start drawing your line after your next audit captures {emptyMetricLabel} data.
+    <div
+      class="pointer-events-none absolute inset-0 grid place-items-center px-6 text-center"
+    >
+      <p class="max-w-xs rounded-2xl bg-canvas/90 px-3 py-2 text-xs text-canvas-muted shadow-sm backdrop-blur">
+        We'll start drawing this line after the next weekly refresh captures
+        {emptyMetricLabel} data.
+      </p>
     </div>
   {/if}
 </div>

@@ -31,20 +31,45 @@ async def audit_nap(
     business: BusinessInput, prior_results: dict[str, dict[str, Any]]
 ) -> SectionResult:
     # Sources actually audited (Maps / Website / Instagram successes). The
-    # runner now strips failed sections from ``prior_results`` so a skipped
+    # runner strips failed sections from ``prior_results`` so a skipped
     # source isn't mistaken for "we checked and it was empty".
     audited_sources = frozenset(prior_results.keys())
+
+    # NAP is a *consistency* check — with fewer than two real sources we have
+    # nothing to compare, so reporting any score (least of all 100/100) is
+    # dishonest. Mark the section failed so the overall reflects the gap and
+    # the per-pillar card prompts the user to fix the underlying data.
+    if len(audited_sources) < 2:
+        missing = [_SOURCE_LABEL[s] for s in SOURCES if s not in audited_sources]
+        return SectionResult(
+            score=0,
+            status="failed",
+            raw_data={
+                "sources_checked": [_SOURCE_LABEL[s] for s in SOURCES if s in audited_sources],
+                "audited_sources": sorted(audited_sources),
+                "skipped_reason": "need_two_sources",
+                "missing_sources": missing,
+            },
+            recommendations=[_no_comparison_rec(missing)],
+        )
 
     sources_input: dict[str, dict[str, Any]] = {}
     for src in SOURCES:
         prior = prior_results.get(src) or {}
+        # Only Maps falls back to the form-supplied name (Maps doesn't
+        # reliably surface the merchant's *registered* name in the panel,
+        # and the form input is the canonical baseline). For website and
+        # Instagram we use only what the scraper actually surfaced —
+        # falling back here was making the sub-check claim "Website:
+        # Proxy Cafe" even when website was never scraped.
+        if src == "maps":
+            name = business.name
+        else:
+            name = prior.get("name") if src in audited_sources else None
         sources_input[src] = {
-            "phone": prior.get("phone"),
-            "address": prior.get("address"),
-            # Use the form-supplied business name as the canonical baseline for
-            # every source — none of the underlying scrapers reliably surface
-            # the merchant's *registered* name today, so we anchor on the input.
-            "name": business.name if src == "maps" else prior.get("name") or business.name,
+            "phone": prior.get("phone") if src in audited_sources else None,
+            "address": prior.get("address") if src in audited_sources else None,
+            "name": name,
         }
 
     comparison = compare_nap(sources_input)
@@ -58,6 +83,30 @@ async def audit_nap(
 
     recommendations = _build_recommendations(comparison, audited_sources)
     return SectionResult(score=score, status="done", raw_data=raw, recommendations=recommendations)
+
+
+def _no_comparison_rec(missing_sources: list[str]) -> RecommendationDraft:
+    """Recommendation shown when NAP couldn't run for lack of sources."""
+    missing_str = " and ".join(missing_sources) if missing_sources else "your website and Instagram"
+    return RecommendationDraft(
+        severity="high",
+        title="Add your website and Instagram so we can cross-check your details",
+        body_markdown=(
+            "**Why it matters**\n\n"
+            "NAP consistency is about whether your business name, phone, and address line up "
+            "across the places customers (and Google) see you — Google Maps, your website, and "
+            f"Instagram. We could only check one source this time ({missing_str} weren't "
+            "available), so there's nothing to compare against yet.\n\n"
+            "**How to fix it**\n\n"
+            "1. Add your website URL on the home page so we can scrape its contact info.\n"
+            "2. Add your Instagram handle so we can read your bio's contact options.\n"
+            "3. Re-run this audit — once we have at least two sources, we'll compare them and "
+            "flag any mismatches."
+        ),
+        estimated_impact="big",
+        estimated_time="10 min",
+        fix_target="nap",
+    )
 
 
 # --- recommendations ---------------------------------------------------------
@@ -92,6 +141,7 @@ def _build_recommendations(
                 ),
                 estimated_impact="small",
                 estimated_time="2 min",
+                fix_target="nap",
             )
         )
 
@@ -126,6 +176,11 @@ def _mismatch_recs(leg: str, leg_data: dict[str, Any]) -> list[RecommendationDra
                 ),
                 estimated_impact="big" if leg == "phone" else "medium",
                 estimated_time="10 min",
+                # Either side could be the one the user edits; route the
+                # investigation through the NAP section. Filtering by
+                # opt-out happens upstream — NAP only emits comparisons
+                # between sources the user *hasn't* opted out of.
+                fix_target="nap",
             )
         )
     return out
@@ -179,6 +234,10 @@ def _missing_recs(
                 ),
                 estimated_impact="medium",
                 estimated_time="10 min",
+                # Target the specific source the user would edit — a
+                # "missing phone on Instagram" rec disappears for users
+                # who've opted out of Instagram via the FTUE answers.
+                fix_target=src,
             )
         )
     return out

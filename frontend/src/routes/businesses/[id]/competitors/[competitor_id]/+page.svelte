@@ -54,23 +54,41 @@
     { key: 'instagram_posts', label: 'IG posts' }
   ]);
 
-  // Compare-against picker. ``'none'`` is the default — the page is
-  // first about how *this competitor* is doing, not a forced one-on-one.
-  // A numeric id selects one of the user's businesses for overlay;
-  // ``'all'`` shows every business of the user at once.
-  /** @type {'none' | 'all' | number} */
-  let compareWith = $state('none');
+  // Compare-against picker. ``'all'`` is the default — the page is
+  // most useful when the user can see this competitor against the full
+  // backdrop of their own businesses. A numeric id narrows the overlay
+  // to a single business of theirs. The original ``'none'`` option was
+  // removed (2026-05-26) because users read it as "nothing to compare
+  // against" / a setup task, when really the page already shows the
+  // competitor as the primary line by itself.
+  // When the user has only one business, ``'all'`` is redundant with
+  // the single per-business pill so we drop ``'all'`` entirely and
+  // default to that one business.
+  /** @type {'all' | number} */
+  let compareWith = $state(/** @type {any} */ ('all'));
 
   const compareOptions = $derived.by(() => {
-    /** @type {Array<{ key: 'none' | 'all' | number, label: string }>} */
-    const out = [{ key: 'none', label: 'None' }];
-    for (const b of businesses) {
-      out.push({ key: b.id, label: b.name });
-    }
+    /** @type {Array<{ key: 'all' | number, label: string }>} */
+    const out = [];
     if (businesses.length > 1) {
       out.push({ key: 'all', label: 'All my businesses' });
     }
+    for (const b of businesses) {
+      out.push({ key: b.id, label: b.name });
+    }
     return out;
+  });
+
+  // If we land on a single-business user with ``'all'`` as the default,
+  // swap to the single business id so the picker matches the rendered
+  // option set.
+  $effect(() => {
+    if (
+      businesses.length === 1 &&
+      compareWith === 'all'
+    ) {
+      compareWith = businesses[0].id;
+    }
   });
 
   // Chart wiring. The TrendChart's `business` prop is the solid line;
@@ -82,13 +100,6 @@
   const chartConfig = $derived.by(() => {
     if (!competitor) return null;
     const compObs = competitorObservations;
-    if (compareWith === 'none') {
-      return {
-        business: compObs,
-        businessName: competitor.name,
-        competitors: []
-      };
-    }
     if (compareWith === 'all') {
       // First user business with any data goes solid; every other user
       // business + this competitor go dashed.
@@ -167,8 +178,8 @@
           ? Number(competitor.latest_instagram_followers).toLocaleString()
           : null,
       emptyHint: competitor?.instagram_url
-        ? "We'll pick this up on the next audit."
-        : "Add this competitor's Instagram URL so we can read it on the next audit."
+        ? "We'll pick this up on the next weekly refresh."
+        : "Add this competitor's Instagram URL so we can read it on the next refresh."
     },
     {
       key: 'instagram_posts',
@@ -178,8 +189,8 @@
           ? String(competitor.latest_instagram_posts)
           : null,
       emptyHint: competitor?.instagram_url
-        ? "We'll pick this up on the next audit."
-        : "Add this competitor's Instagram URL so we can read it on the next audit."
+        ? "We'll pick this up on the next weekly refresh."
+        : "Add this competitor's Instagram URL so we can read it on the next refresh."
     }
   ]);
 
@@ -235,9 +246,7 @@
           <div>
             <p class="text-sm font-semibold text-canvas-ink">Trend over time</p>
             <p class="text-xs text-canvas-muted">
-              {#if compareWith === 'none'}
-                How {competitor.name} is doing
-              {:else if compareWith === 'all'}
+              {#if compareWith === 'all'}
                 {competitor.name} vs all your businesses
               {:else}
                 {competitor.name} vs {chartConfig.businessName}
@@ -301,13 +310,12 @@
           competitors={chartConfig.competitors}
           businessName={chartConfig.businessName}
           {metric}
-          showLegend={compareWith !== 'none'}
+          showLegend={true}
         />
 
         <p class="mt-4 text-xs text-canvas-muted">
-          Not a live feed — each point lands when this competitor is rechecked.
-          That happens on the weekly auto-refresh, or whenever you run an audit
-          on the business that's tracking them.
+          Not a live feed — competitor data refreshes automatically once a
+          week. Your own audits don't touch this chart.
         </p>
       </div>
 
@@ -343,7 +351,7 @@
         {#if competitor.latest_observed_at}
           · last seen {formatRelativeTime(competitor.latest_observed_at + 'Z')}
         {/if}
-        · Updated when you run an audit, not live.
+        · Refreshes weekly on its own.
       </p>
     </section>
 

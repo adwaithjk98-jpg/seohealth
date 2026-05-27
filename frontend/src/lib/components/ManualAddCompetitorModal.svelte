@@ -205,15 +205,16 @@
       {#if submitted}
         <!-- Wait & Notify state — analog of the Discovery scan's waiting
              UI. The POST returned, but the actual scrape happens on the
-             next audit cycle, so the message frames the wait around that. -->
+             next weekly refresh cron, so the message frames the wait
+             around that. -->
         <div class="space-y-4" in:fade={{ duration: 220 }}>
           <p class="text-2xl">✅</p>
           <h2 class="text-xl font-semibold tracking-tight text-canvas-ink">
             Got it — we'll take it from here
           </h2>
           <p class="text-sm text-canvas-muted">
-            We'll start gathering data on this competitor with the next audit. You'll see them
-            on the Competitor Hub once observations are in.
+            We'll start gathering data on this competitor on the next weekly refresh.
+            You'll see them on the Competitor Hub once observations are in.
           </p>
           {#if mode === 'search'}
             <p class="text-xs text-canvas-muted">
@@ -231,7 +232,8 @@
           Add a competitor manually
         </h2>
         <p class="mt-1 text-sm text-canvas-muted">
-          Skip discovery and tell us exactly who to track. We'll fold them into your next audit.
+          Skip discovery and tell us exactly who to track. We'll start gathering
+          their data on the next weekly refresh.
         </p>
 
         <form
@@ -292,8 +294,8 @@
             <p
               class="rounded-xl border border-healthy-100 bg-healthy-50/70 px-3 py-2 text-xs text-canvas-ink"
             >
-              Direct URLs are the fast path — the scraper can pull this listing's metrics on the
-              next audit without a search step.
+              Direct URLs are the fast path — the scraper can pull this
+              listing's metrics on the next weekly refresh without a search step.
             </p>
           {:else}
             <p
