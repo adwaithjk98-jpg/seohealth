@@ -4,7 +4,7 @@
 // competitor's metrics over time. Comparison against the user's own
 // businesses is an opt-in pill on the page. To make that picker snappy
 // (no fetch on toggle), we pull every business's trends payload up
-// front. Paid users cap at 3 businesses, so the fan-out is bounded.
+// front. Every account caps at 1 business, so the fan-out is bounded.
 
 /** @type {import('@sveltejs/kit').Load} */
 export async function load({ fetch, params }) {

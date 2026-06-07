@@ -25,7 +25,7 @@
 
   const subState = $derived(authState.user?.subscription_state ?? null);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
-  const isPaid = $derived(tier === 'paid');
+  const isPaid = $derived(tier !== 'free');
   const competitorLimit = $derived(subState?.limits?.competitors ?? 0);
   // Live "how many slots used" badge for the review-cards UI. Reads from
   // ``trackedForAnchor`` (already refreshed on every successful Track),
@@ -74,23 +74,22 @@
   const scanIdParam = $derived($page.url.searchParams.get('scan_id'));
   const scanId = $derived(scanIdParam ? Number(scanIdParam) : null);
 
-  // Gateway state — when ``scan_id`` is missing and the user has a prior
-  // done scan for their selected anchor, we show the three-option
-  // gateway (Revisit / Manual / Force New) instead of dropping straight
-  // into a new-scan form. Pressing "Force New Scan" appends ``?new=1``
-  // and suppresses the gateway.
+  // Gateway state — when ``scan_id`` is missing and the user has *any*
+  // prior done scan, we show the three-option gateway (Revisit /
+  // Manual / Force New) instead of dropping straight into a new-scan
+  // form. Pressing "Force New Scan" appends ``?new=1`` and suppresses
+  // the gateway.
   const forceNew = $derived($page.url.searchParams.get('new') === '1');
   /** @type {any[]} */
   let priorScans = $state([]);
   let priorScansLoading = $state(true);
-  /** Latest done scan for the currently-selected anchor business, or null. */
-  const latestPriorScan = $derived(
-    selectedBusinessId == null
-      ? null
-      : priorScans.find(
-          (/** @type {any} */ s) => s.business_id === selectedBusinessId
-        ) ?? null
-  );
+  /** Most recent done scan, regardless of which business it was
+   *  anchored to. The scan's *results* are independent of the anchor —
+   *  the user can still track those competitors against any active
+   *  business of theirs — so coupling the gateway to anchor-equality
+   *  hid the Revisit card whenever the original anchor business had
+   *  since been archived. */
+  const latestPriorScan = $derived(priorScans[0] ?? null);
   const showGateway = $derived(
     scanId == null && !forceNew && latestPriorScan != null
   );
@@ -160,15 +159,21 @@
   /** @type {{ maps_url?: string | null, name?: string | null }[]} */
   let trackedForAnchor = $state([]);
 
-  // The dedup must follow whichever business the *cards* are anchored to.
-  // When the user is viewing a saved scan via ``?scan_id=N`` the anchor
-  // is ``scan.business_id``; that can differ from the form's dropdown
-  // selection, which defaults to ``businesses[0]``. Using the form's
-  // value would fetch the wrong business's competitor list and the
-  // dedup would silently match nothing.
-  const dedupBusinessId = $derived(
-    scan?.business_id ?? selectedBusinessId ?? null
-  );
+  // The dedup + counter must follow whichever business the *Track*
+  // action will *write* to — otherwise the "X / Y tracked" pill and
+  // the already-tracked filter disagree with reality. ``trackCard``
+  // writes to ``anchorBusiness.id`` (the form's current selection),
+  // so dedup reads from the same.
+  //
+  // Earlier this was ``scan?.business_id ?? selectedBusinessId`` —
+  // which made sense when the scan was always anchored to a still-
+  // active business, but breaks once the original anchor is archived
+  // (or the user simply changes the form's dropdown to a different
+  // business than the saved scan was originally anchored to). The
+  // result was the counter starting at 0 regardless of existing
+  // tracked competitors, and never incrementing as new Tracks
+  // landed against a different business.
+  const dedupBusinessId = $derived(selectedBusinessId ?? null);
 
   async function refreshTrackedForAnchor() {
     if (dedupBusinessId == null) {

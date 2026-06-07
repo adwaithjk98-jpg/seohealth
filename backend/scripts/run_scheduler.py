@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 _DISPATCH_FUNC = "app.services.auto_audit.dispatch_due_audits"
 _PRUNE_FUNC = "app.services.prune_old_data.prune_old_audit_data"
 _COMPETITOR_REFRESH_FUNC = "app.services.competitor_refresh.refresh_due_competitors"
+_WEEKLY_DIGEST_FUNC = "app.services.weekly_digest.dispatch_weekly_digests"
 # Daily at 06:00 UTC — early-morning IST. The cadence per business is
 # enforced inside the dispatcher; this just decides how often we *check*.
 _CRON_STRING = "0 6 * * *"
@@ -56,10 +57,20 @@ _PRUNE_CRON_STRING = "0 7 * * *"
 # competitors are already warm in the global cache. Routed to the
 # low-priority queue and drained by ``scripts.run_competitor_worker``.
 _COMPETITOR_REFRESH_CRON_STRING = "0 2 * * *"
+# Weekly digest — Mondays 03:30 UTC (~09:00 IST). Lands in inboxes
+# at the start of the working week so an owner can pick a small fix
+# on the morning commute. Paid-tier only; the dispatcher handles the
+# user-level filtering.
+_WEEKLY_DIGEST_CRON_STRING = "30 3 * * 1"
 
 # Funcs we own a cron for — keeps the "cancel before re-add" loop
 # generic so adding more crons later is a one-line change.
-_MANAGED_FUNCS = (_DISPATCH_FUNC, _PRUNE_FUNC, _COMPETITOR_REFRESH_FUNC)
+_MANAGED_FUNCS = (
+    _DISPATCH_FUNC,
+    _PRUNE_FUNC,
+    _COMPETITOR_REFRESH_FUNC,
+    _WEEKLY_DIGEST_FUNC,
+)
 
 
 def _clear_existing(scheduler: Scheduler) -> int:
@@ -107,11 +118,21 @@ def main() -> None:
         queue_name=competitor_queue.name,
         repeat=None,
     )
+    # Weekly digest fan-out. Routed to the audits queue (digest assembly
+    # reads the same tables the audit pipeline does; keeping it on one
+    # queue keeps the Redis topology simple).
+    scheduler.cron(
+        _WEEKLY_DIGEST_CRON_STRING,
+        func=_WEEKLY_DIGEST_FUNC,
+        queue_name=audit_queue.name,
+        repeat=None,
+    )
     logger.info(
-        "scheduler registered (dispatch_cron=%r prune_cron=%r competitor_refresh_cron=%r queues=[%s, %s]); entering run loop",
+        "scheduler registered (dispatch_cron=%r prune_cron=%r competitor_refresh_cron=%r digest_cron=%r queues=[%s, %s]); entering run loop",
         _CRON_STRING,
         _PRUNE_CRON_STRING,
         _COMPETITOR_REFRESH_CRON_STRING,
+        _WEEKLY_DIGEST_CRON_STRING,
         audit_queue.name,
         competitor_queue.name,
     )

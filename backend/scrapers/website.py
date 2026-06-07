@@ -345,6 +345,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="big",
                 estimated_time="professional help",
+                verify_signal="website.https",
             )
         )
 
@@ -369,6 +370,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="big",
                 estimated_time="5 min",
+                verify_signal="website.has_meta_description",
             )
         )
 
@@ -392,6 +394,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="medium",
                 estimated_time="10 min",
+                verify_signal="website.has_og_image",
             )
         )
 
@@ -415,6 +418,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="medium",
                 estimated_time="professional help",
+                verify_signal="website.has_jsonld_localbusiness",
             )
         )
 
@@ -435,6 +439,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="medium",
                 estimated_time="5 min",
+                verify_signal="website.mobile_viewport",
             )
         )
 
@@ -458,6 +463,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="medium",
                 estimated_time="5 min",
+                verify_signal="website.ig_linked",
             )
         )
     elif ig_state == "mismatch":
@@ -484,6 +490,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="big",
                 estimated_time="5 min",
+                verify_signal="website.ig_linked",
             )
         )
 

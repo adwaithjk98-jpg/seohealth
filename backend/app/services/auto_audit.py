@@ -130,7 +130,7 @@ def next_auto_audit_at(
     Returns ``now`` (clamped) when the business is past due — the next
     scheduler tick will pick it up if the user has quota.
     """
-    if user.plan != UserPlan.paid:
+    if user.plan == UserPlan.free:
         return None
     if business.archived_at is not None:
         return None
@@ -168,7 +168,7 @@ def dispatch_due_audits() -> dict[str, int | str]:
             .filter(
                 Business.archived_at.is_(None),
                 Business.audit_schedule_cadence.is_not(None),
-                User.plan == UserPlan.paid,
+                User.plan != UserPlan.free,
             )
             .all()
         )

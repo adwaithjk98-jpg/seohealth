@@ -92,7 +92,7 @@ def assert_can_run(db: DbSession, user: User) -> None:
       Body includes ``next_reset_at`` (first day of next month) so the UI
       can show "next scan unlocks on …".
     """
-    if user.plan != UserPlan.paid:
+    if user.plan == UserPlan.free:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={

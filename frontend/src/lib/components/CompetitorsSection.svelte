@@ -24,7 +24,8 @@
    */
   let { businessId, businessName, tier, competitorLimit } = $props();
 
-  const isPaid = $derived(tier === 'paid');
+  // Both Pro ('paid') and Max qualify — only Free is gated out.
+  const isPaid = $derived(tier !== 'free');
 
   /** @type {any[]} */
   let competitors = $state([]);

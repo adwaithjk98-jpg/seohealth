@@ -58,6 +58,25 @@ class BusinessSummary(BaseModel):
     country: str
 
 
+class SinceLastCheckItem(BaseModel):
+    title: str
+    section: str
+    severity: str | None = None
+    verify_signal: str | None = None
+    was_marked_done: bool | None = None
+
+
+class SinceLastCheck(BaseModel):
+    """Fix-loop summary: what changed since the previous audit. All
+    buckets are empty + ``prev_finished_at`` is None when this is the
+    first audit for the business."""
+
+    confirmed: list[SinceLastCheckItem] = []
+    unverified_done: list[SinceLastCheckItem] = []
+    new: list[SinceLastCheckItem] = []
+    prev_finished_at: datetime | None = None
+
+
 class AuditDetailResponse(BaseModel):
     audit_id: int
     business: BusinessSummary
@@ -73,6 +92,7 @@ class AuditDetailResponse(BaseModel):
     sections: list[AuditSectionResponse]
     open_recommendations_count: int
     done_recommendations_count: int
+    since_last_check: SinceLastCheck = SinceLastCheck()
 
 
 class RecommendationUpdateRequest(BaseModel):

@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.auth_deps import current_user
 from app.db import get_db
-from app.models import Audit, Business, User
-from app.models.enums import AuditStatus, UserPlan
+from app.models import Audit, Business, Recommendation, User
+from app.models.enums import AuditStatus, RecommendationFixStatus, UserPlan
 from app.schemas.business import (
     BusinessCreateRequest,
     BusinessProfileUpdateRequest,
@@ -85,12 +85,55 @@ def _running_audit_id(db: Session, business_id: int) -> int | None:
     return audit.id if audit else None
 
 
-def _to_response(db: Session, b: Business, user: User) -> BusinessResponse:
+def _open_count_for_audit(db: Session, audit_id: int | None) -> int:
+    """Open recommendations on a single audit. Cheap; used by the
+    single-business endpoints. The list endpoint batches via
+    ``_open_counts_by_audit`` to avoid an N+1."""
+    if audit_id is None:
+        return 0
+    return (
+        db.query(func.count(Recommendation.id))
+        .filter(
+            Recommendation.audit_id == audit_id,
+            Recommendation.fix_status == RecommendationFixStatus.open,
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _open_counts_by_audit(
+    db: Session, audit_ids: list[int]
+) -> dict[int, int]:
+    """Map ``audit_id`` → open-recommendation count for the listing path."""
+    if not audit_ids:
+        return {}
+    rows = (
+        db.query(Recommendation.audit_id, func.count(Recommendation.id))
+        .filter(
+            Recommendation.audit_id.in_(audit_ids),
+            Recommendation.fix_status == RecommendationFixStatus.open,
+        )
+        .group_by(Recommendation.audit_id)
+        .all()
+    )
+    return {audit_id: count for audit_id, count in rows}
+
+
+def _to_response(
+    db: Session,
+    b: Business,
+    user: User,
+    *,
+    open_count: int | None = None,
+) -> BusinessResponse:
     completed = _latest_two_completed(db, b.id)
     latest = completed[0] if completed else None
     prev = completed[1] if len(completed) > 1 else None
     latest_score = _audit_overall_score(latest, b) if latest else None
     prev_score = _audit_overall_score(prev, b) if prev else None
+    if open_count is None:
+        open_count = _open_count_for_audit(db, latest.id if latest else None)
     return BusinessResponse(
         id=b.id,
         name=b.name,
@@ -106,6 +149,7 @@ def _to_response(db: Session, b: Business, user: User) -> BusinessResponse:
         latest_audit_id=latest.id if latest else None,
         latest_audit_finished_at=latest.finished_at if latest else None,
         running_audit_id=_running_audit_id(db, b.id),
+        open_recommendations_count=open_count,
         audit_schedule_cadence=b.audit_schedule_cadence,
         next_auto_audit_at=next_auto_audit_at(db, b, user),
         business_type=b.business_type,
@@ -213,7 +257,24 @@ def list_businesses(
         .order_by(desc(Business.added_at))
         .all()
     )
-    return [_to_response(db, b, user) for b in rows]
+    # Batch the latest-audit lookups so we can ask for open counts in one
+    # query rather than N. ``_to_response`` recomputes ``latest`` per
+    # business, but that's a cheap two-row query already cached at the
+    # ORM level once we touch the same audits here.
+    latest_audit_ids: list[int] = []
+    for b in rows:
+        completed = _latest_two_completed(db, b.id)
+        if completed:
+            latest_audit_ids.append(completed[0].id)
+    open_counts = _open_counts_by_audit(db, latest_audit_ids)
+    out: list[BusinessResponse] = []
+    for b in rows:
+        completed = _latest_two_completed(db, b.id)
+        latest_id = completed[0].id if completed else None
+        out.append(
+            _to_response(db, b, user, open_count=open_counts.get(latest_id, 0))
+        )
+    return out
 
 
 @router.get("/businesses/{business_id}", response_model=BusinessResponse)
@@ -281,7 +342,7 @@ def set_business_schedule(
     biz = db.get(Business, business_id)
     if biz is None or biz.user_id != user.id or biz.archived_at is not None:
         raise HTTPException(status_code=404, detail="business not found")
-    if user.plan != UserPlan.paid and payload.cadence is not None:
+    if user.plan == UserPlan.free and payload.cadence is not None:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={

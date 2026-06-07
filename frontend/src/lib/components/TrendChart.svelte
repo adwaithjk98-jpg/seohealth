@@ -94,7 +94,11 @@
     ];
 
     (competitors ?? []).forEach((/** @type {any} */ comp, /** @type {number} */ idx) => {
-      const color = COMPETITOR_PALETTE[idx % COMPETITOR_PALETTE.length];
+      // Caller can override the palette per series via `comp.color`. Used
+      // on the market page where filter-pills are rendered alongside the
+      // chart and must match exactly even when the user toggles some
+      // series off (and the chart's idx shifts under our feet).
+      const color = comp.color || COMPETITOR_PALETTE[idx % COMPETITOR_PALETTE.length];
       const pts = (comp.observations ?? [])
         .filter((/** @type {any} */ p) => p[yKey] != null)
         .map((/** @type {any} */ p) => ({ x: toUtcIso(p.observed_at), y: p[yKey] }));

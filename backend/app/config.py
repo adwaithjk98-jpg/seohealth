@@ -36,13 +36,17 @@ class Settings(BaseSettings):
     # Razorpay-dashboard "plan id" we hand to subscriptions.create. Set on a
     # per-environment basis in test mode (e.g. ``plan_NlVQGq0qHy3Mhz``).
     razorpay_paid_plan_id: str = ""
+    # Razorpay plan id for the Max (multi-location / agency) tier. Same idea as
+    # the Pro plan id above; a separate plan in the Razorpay dashboard.
+    razorpay_max_plan_id: str = ""
     # Optional webhook secret. When set, /api/subscriptions/webhook verifies
     # the ``X-Razorpay-Signature`` HMAC before applying the event. When empty,
     # the endpoint accepts events without a signature (dev-friendly).
     razorpay_webhook_secret: str = ""
-    # Display-only price label for the Billing UI. Razorpay-side pricing is
+    # Display-only price labels for the Billing UI. Razorpay-side pricing is
     # configured on the plan in the Razorpay dashboard.
-    paid_plan_price_label: str = "₹399 / month"
+    paid_plan_price_label: str = "₹549 / month"
+    max_plan_price_label: str = "₹2,500 / month"
 
     # Path to the standalone ``audit_scraper`` engine (sibling repo). The
     # competitor scraper adapter spawns ``python3 scrape_competitors.py``

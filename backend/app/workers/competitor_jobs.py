@@ -33,6 +33,7 @@ from app.services.competitor_scraper_adapter import (
     run_competitor_scrape,
 )
 from scrapers import audit_instagram, fetch_competitor_metrics
+from scrapers.maps import CompetitorScrapeTarget
 from scrapers.types import BusinessInput
 
 logger = logging.getLogger(__name__)
@@ -103,17 +104,11 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
     """
     db = SessionLocal()
     try:
-        metrics = asyncio.run(fetch_competitor_metrics([(0, maps_url)]))
-        if not metrics:
-            logger.warning(
-                "refresh_cache_job: scraper returned no results for url=%r", maps_url
-            )
-            return {"cache_key": cache_key, "status": "no_result"}
-        metric = metrics[0]
-        upsert_metric_cache(db, cache_key, maps_url, metric)
-
         # Find every active Competitor row that maps to this cache_key.
         # We can't normalize in SQL portably; load active rows and filter.
+        # (Done up-front now so we can pass name + parent-city into the
+        # scraper as search-by-name input — that's the flow that
+        # produces working review_count, mirroring the user-audit path.)
         matching: list[Competitor] = []
         for c in (
             db.query(Competitor)
@@ -126,9 +121,50 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
             if normalize_maps_url(c.maps_url or "") == cache_key:
                 matching.append(c)
 
+        # Pull a representative name + city for the search query. Many
+        # users can track the same listing, but the underlying business
+        # is one place — any matching row's name works, and the parent
+        # business's city is the right locality hint (competitors are
+        # tracked nearby by definition).
+        search_name: str | None = None
+        search_city: str | None = None
+        if matching:
+            first = matching[0]
+            search_name = first.name
+            # Lazy-load the parent business for the city.
+            parent = db.get(Business, first.business_id) if first.business_id else None
+            if parent is not None:
+                search_city = parent.city
+
+        target = CompetitorScrapeTarget(
+            competitor_id=0,
+            maps_url=maps_url,
+            name=search_name,
+            city=search_city,
+        )
+        metrics = asyncio.run(fetch_competitor_metrics([target]))
+        if not metrics:
+            logger.warning(
+                "refresh_cache_job: scraper returned no results for url=%r", maps_url
+            )
+            return {"cache_key": cache_key, "status": "no_result"}
+        metric = metrics[0]
+        upsert_metric_cache(db, cache_key, maps_url, metric)
+
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         obs_written = 0
         for comp in matching:
+            # Self-heal: competitors tracked before the discovery
+            # scraper started returning IG/website fields (or added
+            # manually via maps_url only) land with NULL URLs. The
+            # metric scrape probes the Maps panel for both and exposes
+            # them on ``metric``; backfill them onto the Competitor
+            # row the first time we see them so future refreshes don't
+            # have to re-discover.
+            if not comp.website_url and getattr(metric, "website_url", None):
+                comp.website_url = metric.website_url
+            if not comp.instagram_url and getattr(metric, "instagram_url", None):
+                comp.instagram_url = metric.instagram_url
             ig_followers, ig_posts = asyncio.run(
                 _ig_metrics_for_url(comp.instagram_url)
             )

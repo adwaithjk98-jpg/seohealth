@@ -2,7 +2,7 @@
 // dashboard loader (so a tab-switch doesn't re-fetch /api/businesses) and
 // fans out to /api/businesses/{id}/competitors per business.
 //
-// Paid users cap at 3 businesses, so the fan-out is bounded and trivially
+// Every account caps at 1 business, so the fan-out is bounded and trivially
 // small. If that limit ever grows, this is the place to swap in a
 // dedicated aggregator route.
 

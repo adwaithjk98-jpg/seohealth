@@ -127,8 +127,15 @@
     allSeries[0] && !disabledIds.has(allSeries[0].id) ? allSeries[0].observations : []
   );
 
+  // Pass each series' explicit color through to TrendChart so the
+  // dashed line matches the pill dot exactly. Without this, the chart's
+  // built-in palette cycles by *visible* index and drifts away from the
+  // pill colors as soon as the user toggles one off.
   const chartCompetitors = $derived(
-    allSeries.slice(1).filter((s) => !disabledIds.has(s.id))
+    allSeries
+      .slice(1)
+      .filter((s) => !disabledIds.has(s.id))
+      .map((s) => ({ ...s, color: s.color }))
   );
 
   const chartBusinessName = $derived(allSeries[0]?.name ?? 'Your business');
@@ -363,10 +370,17 @@
         />
       </div>
 
-      <p class="mt-4 text-xs text-canvas-muted">
-        These lines aren't live. Your own lines land a new point every time
-        you run an audit on the business. Competitor lines refresh
-        automatically once a week — you don't have to do anything.
+      <p class="mt-4 text-xs leading-relaxed text-canvas-muted">
+        Competitor lines refresh on their own each week. Your own lines
+        update whenever an audit runs — we recommend
+        <a
+          href="/dashboard/audit"
+          class="font-medium text-healthy-700 underline-offset-2 hover:underline"
+        >
+          setting up auto-audits
+        </a>
+        so they keep pace automatically, or you can always run a manual
+        audit from there.
       </p>
     </div>
 

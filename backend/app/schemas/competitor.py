@@ -65,7 +65,11 @@ class TrendPoint(BaseModel):
     absent for a given point — the chart skips null values.
     """
 
-    audit_id: int
+    # Nullable since the weekly competitor_refresh cron writes
+    # observations without an originating audit; CompetitorObservation.audit_id
+    # was made nullable on 2026-05-26 but this schema wasn't updated,
+    # which 500'd /trends and silently emptied the deep-dive chart.
+    audit_id: int | None
     observed_at: datetime
     rating: float | None
     review_count: int | None

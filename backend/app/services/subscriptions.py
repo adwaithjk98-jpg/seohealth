@@ -57,7 +57,10 @@ TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
         "discovery_scans_per_month": 0,
     },
     UserPlan.paid: {
-        "businesses": 3,
+        # Pro is now a single-business tier: the upgrade is about depth
+        # (auto-audits, competitor tracking, weekly digest), not slot count.
+        # Multi-location owners belong on the Max tier below. See pricing note.
+        "businesses": 1,
         "audits_per_week": 7,
         # Phase 4.6: the cap is now total across *all* of the user's
         # businesses, not per-business. The Hub counter reads this as
@@ -68,9 +71,26 @@ TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
         # here when the higher pricing tier lands.
         "discovery_scans_per_month": 1,
     },
+    UserPlan.max: {
+        # Max is the multi-location / agency tier (₹2,500/mo). Breadth, not
+        # depth: the same quality loop as Pro, applied across many businesses.
+        "businesses": 10,
+        "audits_per_week": 25,
+        "competitors": 8,
+        "discovery_scans_per_month": 4,
+    },
 }
 
 PAID_PLAN_TIER = "paid"
+MAX_PLAN_TIER = "max"
+
+# A subscription row's ``plan_tier`` string maps to the ``users.plan`` enum the
+# user is bumped to on activation. Centralised so the mock path, the live
+# checkout, and the webhook all agree on what "max" means.
+PLAN_TIER_TO_USER_PLAN: dict[str, UserPlan] = {
+    PAID_PLAN_TIER: UserPlan.paid,
+    MAX_PLAN_TIER: UserPlan.max,
+}
 _RAZORPAY_API_BASE = "https://api.razorpay.com/v1"
 # 12 cycles ≈ 1 year of monthly billing. Razorpay requires a fixed count.
 _DEFAULT_TOTAL_COUNT = 12
@@ -216,7 +236,7 @@ def _activate_subscription(
         row.status = SubscriptionStatus.active
         row.plan_tier = plan_tier
         row.cancelled_at = None
-    _ensure_user_plan(db, user, UserPlan.paid)
+    _ensure_user_plan(db, user, PLAN_TIER_TO_USER_PLAN.get(plan_tier, UserPlan.paid))
     db.commit()
     db.refresh(row)
     db.refresh(user)
@@ -288,15 +308,28 @@ def _mark_past_due(
 # --- Public service API -------------------------------------------------------
 
 
-def create_checkout(db: DbSession, user: User) -> dict[str, Any]:
-    """Start an upgrade. Returns the payload the frontend needs to proceed.
+def _razorpay_plan_id_for_tier(plan_tier: str) -> str | None:
+    """The Razorpay plan id configured for a given tier, or None if unset."""
+    if plan_tier == MAX_PLAN_TIER:
+        return settings.razorpay_max_plan_id or None
+    return settings.razorpay_paid_plan_id or None
+
+
+def create_checkout(
+    db: DbSession, user: User, plan_tier: str = PAID_PLAN_TIER
+) -> dict[str, Any]:
+    """Start an upgrade to ``plan_tier`` (``paid`` or ``max``).
 
     Two paths (see module docstring): real Razorpay vs mock. Both are safe to
     call repeatedly; an already-active user just gets their existing
     subscription back as a no-op.
     """
+    if plan_tier not in PLAN_TIER_TO_USER_PLAN:
+        raise ValueError(f"unknown plan tier: {plan_tier!r}")
+
     existing = active_subscription(db, user.id)
-    if existing is not None:
+    if existing is not None and existing.plan_tier == plan_tier:
+        # Same tier they're already on — genuine no-op.
         return {
             "mock": not is_razorpay_configured(),
             "razorpay_subscription_id": existing.razorpay_subscription_id,
@@ -306,32 +339,57 @@ def create_checkout(db: DbSession, user: User) -> dict[str, Any]:
             "already_active": True,
         }
 
+    if existing is not None and not is_razorpay_configured():
+        # Tier change in mock mode (e.g. Pro → Max): flip the existing row and
+        # the user's plan in place. The live-Razorpay tier-change flow (cancel
+        # old + create new) is out of scope until billing is KYC'd; that path
+        # falls through to create a fresh subscription below.
+        existing.plan_tier = plan_tier
+        _ensure_user_plan(db, user, PLAN_TIER_TO_USER_PLAN[plan_tier])
+        db.commit()
+        db.refresh(existing)
+        db.refresh(user)
+        return {
+            "mock": True,
+            "razorpay_subscription_id": existing.razorpay_subscription_id,
+            "razorpay_key_id": None,
+            "plan_tier": plan_tier,
+            "short_url": None,
+            "already_active": True,
+        }
+
     if not is_razorpay_configured():
         mock_id = f"sub_mock_{secrets.token_hex(8)}"
-        _activate_subscription(db, user, mock_id, PAID_PLAN_TIER)
+        _activate_subscription(db, user, mock_id, plan_tier)
         return {
             "mock": True,
             "razorpay_subscription_id": mock_id,
             "razorpay_key_id": None,
-            "plan_tier": PAID_PLAN_TIER,
+            "plan_tier": plan_tier,
             "short_url": None,
         }
 
-    if not settings.razorpay_paid_plan_id:
+    plan_id = _razorpay_plan_id_for_tier(plan_tier)
+    if not plan_id:
+        env_var = (
+            "RAZORPAY_MAX_PLAN_ID"
+            if plan_tier == MAX_PLAN_TIER
+            else "RAZORPAY_PAID_PLAN_ID"
+        )
         raise RuntimeError(
-            "RAZORPAY_PAID_PLAN_ID must be set when Razorpay credentials are "
-            "configured. Create a plan in the Razorpay dashboard (Test Mode) "
-            "and paste its id (e.g. plan_xxxxxxxx) into the env var."
+            f"{env_var} must be set when Razorpay credentials are configured. "
+            "Create a plan in the Razorpay dashboard (Test Mode) and paste its "
+            "id (e.g. plan_xxxxxxxx) into the env var."
         )
 
-    rzp = _create_razorpay_subscription(settings.razorpay_paid_plan_id)
+    rzp = _create_razorpay_subscription(plan_id)
     razorpay_subscription_id = rzp["id"]
-    _mark_past_due(db, user, razorpay_subscription_id, PAID_PLAN_TIER)
+    _mark_past_due(db, user, razorpay_subscription_id, plan_tier)
     return {
         "mock": False,
         "razorpay_subscription_id": razorpay_subscription_id,
         "razorpay_key_id": settings.razorpay_key_id,
-        "plan_tier": PAID_PLAN_TIER,
+        "plan_tier": plan_tier,
         "short_url": rzp.get("short_url"),
     }
 

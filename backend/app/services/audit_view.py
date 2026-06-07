@@ -25,6 +25,7 @@ from app.services.audit_summary import (
     section_meta,
     section_summary,
 )
+from app.services.fix_verifier import verify as verify_fix_signal
 from app.services.pillar_optout import enabled_pillars
 
 
@@ -83,6 +84,92 @@ def _previous_section_scores(
             scores.append(sec.score)
     overall = round(sum(scores) / len(scores)) if scores else None
     return by_section, overall
+
+
+def _build_since_last_check(
+    db: Session,
+    audit: Audit,
+    current_sections: list[AuditSection],
+    current_recs: list[Recommendation],
+) -> dict:
+    """Fix-loop summary surfaced on the business detail page.
+
+    Compares the current audit against the most recent prior completed
+    audit for the same business. Three buckets matter to the user:
+
+    * ``confirmed`` — a rec from last audit (open or done) whose
+      ``verify_signal`` is now positive in the new raw_data. The fix
+      landed; we celebrate.
+    * ``unverified_done`` — the user marked something done in the
+      previous audit, but the new raw_data still doesn't see it.
+      Catches both honest-not-yet-propagated and accidentally-marked-
+      done cases.
+    * ``new`` — recs in the current audit whose titles weren't in
+      the previous one. Each title is unique-per-section in practice,
+      so a simple set diff is enough.
+    """
+    prev = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == audit.business_id,
+            Audit.id != audit.id,
+            Audit.status == AuditStatus.done,
+        )
+        .order_by(desc(Audit.finished_at), desc(Audit.id))
+        .first()
+    )
+    if prev is None:
+        # First-ever audit — no deltas. Returning an empty struct
+        # rather than ``None`` keeps the frontend conditional simple.
+        return {"confirmed": [], "unverified_done": [], "new": [], "prev_finished_at": None}
+
+    # raw_data per section for the *current* audit — drives verification.
+    current_raw = {s.section.value: (s.raw_data_json or {}) for s in current_sections}
+
+    confirmed: list[dict] = []
+    unverified_done: list[dict] = []
+    for prev_rec in prev.recommendations:
+        if not prev_rec.verify_signal:
+            continue
+        section_raw = current_raw.get(prev_rec.section.value)
+        verdict = verify_fix_signal(prev_rec.verify_signal, section_raw)
+        if verdict == "verified":
+            confirmed.append(
+                {
+                    "title": prev_rec.title,
+                    "section": prev_rec.section.value,
+                    "verify_signal": prev_rec.verify_signal,
+                    "was_marked_done": prev_rec.fix_status.value == "done",
+                }
+            )
+        elif verdict == "unverified" and prev_rec.fix_status.value == "done":
+            unverified_done.append(
+                {
+                    "title": prev_rec.title,
+                    "section": prev_rec.section.value,
+                    "verify_signal": prev_rec.verify_signal,
+                }
+            )
+
+    # "New" = a rec whose (section, title) pair wasn't in the prev audit.
+    prev_keys = {(r.section.value, r.title) for r in prev.recommendations}
+    new_findings: list[dict] = []
+    for rec in current_recs:
+        if (rec.section.value, rec.title) not in prev_keys:
+            new_findings.append(
+                {
+                    "title": rec.title,
+                    "section": rec.section.value,
+                    "severity": rec.severity.value,
+                }
+            )
+
+    return {
+        "confirmed": confirmed,
+        "unverified_done": unverified_done,
+        "new": new_findings,
+        "prev_finished_at": prev.finished_at,
+    }
 
 
 def build_audit_detail(db: Session, audit: Audit) -> dict:
@@ -212,6 +299,13 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         "sections": section_payloads,
         "open_recommendations_count": open_count,
         "done_recommendations_count": done_count,
+        # Fix-loop summary: confirmed / unverified-done / new since
+        # the previous audit. Empty buckets when there's no prior
+        # audit to compare against — frontend hides the strip in
+        # that case.
+        "since_last_check": _build_since_last_check(
+            db, audit, sections, recommendations
+        ),
     }
 
 

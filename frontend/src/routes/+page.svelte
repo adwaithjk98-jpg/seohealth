@@ -247,20 +247,19 @@
       </p>
     {:else if atBusinessLimit}
       <h2 class="text-lg font-semibold text-canvas-ink">
-        {tier === 'free' ? 'Upgrade to add another business' : 'Plan limit reached'}
+        {overBusinessLimit ? 'Plan limit reached' : 'Upgrade to track more'}
       </h2>
       <p class="mt-2 text-sm text-canvas-muted">
-        {#if tier === 'free'}
-          You've used your 1 free business slot. Upgrade to the paid plan to track up to 3 businesses with weekly health checks.
-        {:else if overBusinessLimit}
+        {#if overBusinessLimit}
           You're tracking {businessCount} businesses but your plan covers {businessLimit}. We'll keep everything visible — archive one to add a new business going forward.
         {:else}
-          You've hit the {businessLimit}-business limit on your plan.
+          {tier === 'free' ? 'Free and Pro each track one business.' : 'Pro tracks one business.'}
+          To run multiple locations, Max covers up to 10 — with the full monitoring loop on every one.
         {/if}
       </p>
       <div class="mt-5 flex flex-wrap gap-3">
         <a href="/dashboard" class="btn-ghost">Back to dashboard</a>
-        {#if tier === 'free'}
+        {#if !overBusinessLimit}
           <a href="/billing" class="btn-primary">See plans</a>
         {/if}
       </div>

@@ -3,7 +3,12 @@ import enum
 
 class UserPlan(str, enum.Enum):
     free = "free"
+    # ``paid`` is the Pro tier (single business + the quality loop). ``max`` is
+    # the multi-location / agency tier. Both are "paying" tiers — gates that
+    # used to test ``!= paid`` must test ``== free`` so Max users aren't locked
+    # out of Pro features.
     paid = "paid"
+    max = "max"
 
 
 class AuditStatus(str, enum.Enum):

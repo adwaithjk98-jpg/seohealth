@@ -166,7 +166,7 @@
         >
           ↻ Try again
         </button>
-        <a href={`/audits/${auditId}/dashboard`} class="btn-ghost text-action-700">
+        <a href="/dashboard" class="btn-ghost text-action-700">
           ← Back to dashboard
         </a>
       </div>
@@ -180,7 +180,7 @@
       <p class="mt-1 text-sm text-canvas-muted">
         It may not have been part of your most recent health check.
       </p>
-      <a href={`/audits/${auditId}/dashboard`} class="btn-primary mt-4 inline-flex">
+      <a href="/dashboard" class="btn-primary mt-4 inline-flex">
         ← Back to dashboard
       </a>
     </div>
@@ -188,7 +188,7 @@
 {:else}
   <section class="space-y-8">
     <a
-      href={`/audits/${auditId}/dashboard`}
+      href="/dashboard"
       class="inline-flex items-center gap-1 text-sm text-canvas-muted hover:text-canvas-ink"
     >
       ← Back to dashboard

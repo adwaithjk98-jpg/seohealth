@@ -75,88 +75,15 @@ def _audit_maps_sync(
 
     with chrome_driver() as driver:
         try:
-            driver.get(target_url)
+            found = _navigate_to_listing_panel(driver, target_url)
         except TimeoutException as exc:
             raise RuntimeError(f"Maps page load timed out: {exc}") from exc
         except WebDriverException as exc:
             raise RuntimeError(f"Maps page load failed: {exc}") from exc
 
-        try:
-            WebDriverWait(driver, PANEL_WAIT_S).until(
-                EC.presence_of_element_located((By.TAG_NAME, "h1"))
-            )
-        except TimeoutException:
-            pass  # let the parser try anyway; it'll mark a partial result
-
-        detect_captcha(driver)
-
-        # Hop-twice trick: when the URL we land on resolves to a
-        # ``/maps/place/...`` (either because Google auto-redirected a
-        # name+city search to a single match, or because we clicked
-        # into the first result below), navigating to that resolved
-        # URL *fresh* makes Google paint the full F7nice DOM
-        # including the ``(N reviews)`` span. The same URL, when
-        # reached via a drill-in from a search results page, comes
-        # back with the review-count sibling stripped — verified
-        # repeatable headless. One extra ``driver.get()`` costs ~1s
-        # and gets us the count for free.
-        try:
-            # The h1 wait above fires before Google's JS replaces the
-            # URL with the resolved ``/maps/place/...``. Give it a brief
-            # explicit wait so we don't read a stale ``current_url``.
-            try:
-                WebDriverWait(driver, 4).until(
-                    lambda d: "/maps/place/" in d.current_url
-                )
-            except TimeoutException:
-                pass
-            here = driver.current_url
-            if "/maps/place/" in here and here != target_url:
-                driver.get(here)
-                try:
-                    WebDriverWait(driver, PANEL_WAIT_S).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "h1"))
-                    )
-                except TimeoutException:
-                    pass
-                detect_captcha(driver)
-        except WebDriverException:
-            pass
-
+        _wait_for_review_span(driver)
         _emit(progress, "reading_listing")
-        raw = _extract_panel(driver)
-
-        # Search by name+city often lands on a /maps/search list rather than
-        # the merchant's panel — Google only auto-picks when the query has a
-        # single unambiguous hit. When that happens, walk into the first
-        # result so the rest of the audit has a real listing to read.
-        if not raw.get("found"):
-            if _click_first_search_result(driver):
-                _emit(progress, "drilled_into_first_result")
-                detect_captcha(driver)
-                # Same hop-twice trick on the drilled path — the click
-                # navigates to a place URL but inherits the search-
-                # session fingerprint that strips the count.
-                try:
-                    try:
-                        WebDriverWait(driver, 4).until(
-                            lambda d: "/maps/place/" in d.current_url
-                        )
-                    except TimeoutException:
-                        pass
-                    here = driver.current_url
-                    if "/maps/place/" in here:
-                        driver.get(here)
-                        try:
-                            WebDriverWait(driver, PANEL_WAIT_S).until(
-                                EC.presence_of_element_located((By.TAG_NAME, "h1"))
-                            )
-                        except TimeoutException:
-                            pass
-                        detect_captcha(driver)
-                except WebDriverException:
-                    pass
-                raw = _extract_panel(driver)
+        raw = _extract_panel(driver) if found else {"found": False}
 
     if not raw.get("found"):
         raw["url"] = target_url
@@ -250,6 +177,131 @@ def _click_first_search_result(driver: WebDriver) -> bool:
     return False
 
 
+# The ChIJ-prefixed place_id is embedded in Google's long-form Maps URLs
+# inside the ``!19s<id>`` segment of the ``data=`` blob. It's the most
+# stable cross-listing identity Google exposes, more reliable than the
+# slug or the lat/long. We extract it to verify "after a search-by-name,
+# did we land on the same listing we originally tracked?".
+_PLACE_ID_PATTERN = re.compile(r"!19s(ChIJ[A-Za-z0-9_-]{16,})")
+
+
+def _extract_place_id(url: str | None) -> str | None:
+    if not url:
+        return None
+    m = _PLACE_ID_PATTERN.search(url)
+    return m.group(1) if m else None
+
+
+def _wait_for_review_span(driver: WebDriver, seconds: float = 3) -> None:
+    """Wait for the F7nice review-count span to render. No-op on timeout
+    so listings with zero reviews don't block. Extracted so both scrapers
+    apply the same warmup before reading review_count."""
+    try:
+        WebDriverWait(driver, seconds).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "div.F7nice [aria-label$='reviews'], div.F7nice [aria-label$='review']")
+            )
+        )
+    except TimeoutException:
+        pass
+
+
+def _navigate_to_listing_panel(driver: WebDriver, target_url: str) -> bool:
+    """Drive to ``target_url`` and land on a real ``/maps/place/...`` panel.
+
+    Performs the full audit-style resolution sequence the user-audit
+    path uses (and which produces working review_count where direct-URL
+    navigation alone often fails):
+
+      1. ``driver.get(target_url)`` and wait for an ``<h1>``.
+      2. Hop-twice — if Google resolved to ``/maps/place/...``, navigate
+         to that resolved URL fresh once more. The same place page,
+         when reached via a drill-in from a search-results page, comes
+         back with the review-count sibling stripped; the fresh hop
+         restores the full F7nice DOM.
+      3. If we landed on a ``/maps/search/...`` results page instead
+         (because the query was ambiguous), drill into the first
+         result and hop-twice that one too.
+      4. Re-verify the h1 isn't the generic "Results" chrome.
+
+    Returns True when a real listing panel is loaded, False if the
+    resolution chain bottoms out at a search-results page or an error.
+    Raises ``CaptchaDetected`` (from ``detect_captcha``) — the caller
+    decides whether that's recoverable. Other exceptions are swallowed
+    so the caller can decide what to do with a partial / failed load.
+    """
+    try:
+        driver.get(target_url)
+    except (TimeoutException, WebDriverException):
+        return False
+
+    try:
+        WebDriverWait(driver, PANEL_WAIT_S).until(
+            EC.presence_of_element_located((By.TAG_NAME, "h1"))
+        )
+    except TimeoutException:
+        pass
+
+    detect_captcha(driver)
+
+    # Hop-twice on the first resolution.
+    try:
+        try:
+            WebDriverWait(driver, 4).until(
+                lambda d: "/maps/place/" in d.current_url
+            )
+        except TimeoutException:
+            pass
+        here = driver.current_url
+        if "/maps/place/" in here and here != target_url:
+            driver.get(here)
+            try:
+                WebDriverWait(driver, PANEL_WAIT_S).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                )
+            except TimeoutException:
+                pass
+            detect_captcha(driver)
+    except WebDriverException:
+        pass
+
+    # If we're still on a /maps/search/ results page, drill into the
+    # first result + hop-twice that one too.
+    on_search_page = False
+    try:
+        on_search_page = "/maps/search/" in (driver.current_url or "")
+    except WebDriverException:
+        pass
+    if on_search_page:
+        if not _click_first_search_result(driver):
+            return False
+        try:
+            try:
+                WebDriverWait(driver, 4).until(
+                    lambda d: "/maps/place/" in d.current_url
+                )
+            except TimeoutException:
+                pass
+            here = driver.current_url
+            if "/maps/place/" in here:
+                driver.get(here)
+                try:
+                    WebDriverWait(driver, PANEL_WAIT_S).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                    )
+                except TimeoutException:
+                    pass
+                detect_captcha(driver)
+        except WebDriverException:
+            pass
+
+    # Final sanity: are we on a real listing?
+    name = _safe_text(driver, By.CSS_SELECTOR, "h1")
+    if not name or name.strip().lower() in _SEARCH_RESULTS_H1:
+        return False
+    return True
+
+
 def _extract_panel(driver: WebDriver) -> dict[str, Any]:
     """Pull rating / review count / category / hours / website indicator.
 
@@ -274,8 +326,9 @@ def _extract_panel(driver: WebDriver) -> dict[str, Any]:
 
     # The review-count span inside F7nice renders a tick after the rating
     # span on slow/headless Chrome runs. A short explicit wait here means
-    # ``_find_review_count`` reliably sees both children instead of
-    # racing on rating-only and falling back to None.
+    # the JS extractor inside ``extract_listing_fields`` reliably sees
+    # both children instead of racing on rating-only and falling back to
+    # None.
     try:
         WebDriverWait(driver, 3).until(
             EC.presence_of_element_located(
@@ -287,33 +340,29 @@ def _extract_panel(driver: WebDriver) -> dict[str, Any]:
         # JS extractor return None for those cases.
         pass
 
-    page_source = ""
-    try:
-        page_source = driver.page_source
-    except WebDriverException:
-        pass
-
-    rating, review_count = _parse_rating_and_reviews(driver, page_source)
-    if rating is not None:
-        raw["rating"] = rating
-    if review_count is not None:
-        raw["review_count"] = review_count
-
-    category = _parse_category(driver)
-    if category:
-        raw["category"] = category
-
-    raw["has_hours"] = _has_hours(driver, page_source)
-    website_url = _extract_website_url(driver)
-    raw["has_website_link"] = bool(website_url)
-    if website_url:
-        raw["website_url"] = website_url
-    raw["phone"] = _extract_phone(driver)
-    raw["address"] = _extract_address(driver)
-    raw["photo_count"] = _estimate_photo_count(page_source)
-    # Reply-to-reviews and recent-review counts require deep panel navigation
-    # (clicking "Reviews", scrolling, parsing each card). Surface conservative
-    # defaults for now so the score still reflects what we *did* observe.
+    # Single shared extraction. Every Maps-panel field comes from
+    # ``extract_listing_fields`` — the same call the competitor refresh
+    # uses — so parsing fixes (review_count JS extractor, website URL
+    # sanitizer, etc.) automatically apply to both paths.
+    fields = extract_listing_fields(driver)
+    if fields.rating is not None:
+        raw["rating"] = fields.rating
+    if fields.review_count is not None:
+        raw["review_count"] = fields.review_count
+    if fields.category:
+        raw["category"] = fields.category
+    raw["has_hours"] = fields.has_hours
+    raw["has_website_link"] = bool(fields.website_url)
+    if fields.website_url:
+        raw["website_url"] = fields.website_url
+    raw["phone"] = fields.phone
+    raw["address"] = fields.address
+    raw["photo_count"] = fields.photo_count
+    # Reply-to-reviews and recent-review counts require deep panel
+    # navigation (clicking "Reviews", scrolling, parsing each card) —
+    # the audit-only orchestration that ``extract_listing_fields``
+    # deliberately doesn't perform. Surface conservative defaults for
+    # now so the score still reflects what we *did* observe.
     raw["responds_to_reviews"] = False
     raw["recent_review_count_30d"] = None
 
@@ -755,10 +804,110 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                 ),
                 estimated_impact="medium",
                 estimated_time="20 min",
+                verify_signal="maps.replies_to_reviews",
             )
         )
 
     return recs
+
+
+# --- Shared Maps-listing extraction ----------------------------------------
+#
+# Before 2026-05-28, ``_audit_maps_sync`` (user-business audit) and
+# ``_scrape_one_competitor`` (competitor refresh) were two independent
+# Selenium routines that each parsed the same Maps panel into different
+# field shapes. They drifted: review_count parsing got a JS-extractor fix
+# in the audit path that never made it to the competitor path. Same
+# review-count span, same DOM, two different parsers, two different bug
+# tails.
+#
+# ``MapsListing`` + ``extract_listing_fields`` collapse that to one
+# canonical extraction. Both top-level scrapers now call
+# ``extract_listing_fields(driver)`` for everything the Maps panel can
+# tell us. Each scraper keeps its own orchestration (the audit adds
+# owner-reply scans, photo counts, sub-checks; the competitor refresh
+# just persists the metric subset), but a fix to ``review_count`` lands
+# in one place and propagates to both.
+
+
+@dataclass
+class MapsListing:
+    """Canonical snapshot of what we can extract from a Google Maps panel.
+
+    Field names are the union the rest of the system reads from. Both
+    ``_audit_maps_sync`` and ``_scrape_one_competitor`` populate the same
+    keys; downstream code (audit raw_data dict, CompetitorMetrics,
+    discovery results from the external subprocess) should match these
+    names so a single rename here propagates everywhere.
+
+    ``None`` means "we tried and couldn't extract." Callers that need to
+    distinguish "tried" from "didn't try" should not call the extractor
+    at all in the second case.
+    """
+
+    name: str | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    category: str | None = None
+    website_url: str | None = None
+    instagram_url: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    has_hours: bool = False
+    photo_count: int | None = None
+
+
+def extract_listing_fields(driver: WebDriver) -> MapsListing:
+    """Pull every Maps-panel field we know how to extract from a loaded page.
+
+    Assumes the caller has already navigated the driver to the place
+    page, performed any hop-twice resolution, and waited for the h1 to
+    render. Doesn't raise on a missing field — each extractor returns
+    ``None`` independently so a partial listing still surfaces what we
+    *did* read.
+
+    The IG panel probe is best-effort — most Maps listings don't link
+    Instagram directly. The richer IG-link discovery happens on the
+    website scraper (``scrapers/website.py::_extract_instagram_handle``)
+    which has a real signal source.
+    """
+    page_source = ""
+    try:
+        page_source = driver.page_source
+    except WebDriverException:
+        pass
+
+    name = _safe_text(driver, By.CSS_SELECTOR, "h1")
+    rating, review_count = _parse_rating_and_reviews(driver, page_source)
+    category = _parse_category(driver)
+    website_url = _extract_website_url(driver)
+    phone = _extract_phone(driver)
+    address = _extract_address(driver)
+    has_hours = _has_hours(driver, page_source)
+    photo_count = _estimate_photo_count(page_source)
+
+    instagram_url: str | None = None
+    try:
+        for anchor in driver.find_elements(By.CSS_SELECTOR, "a[href*='instagram.com/']"):
+            href = (anchor.get_attribute("href") or "").strip()
+            if href:
+                instagram_url = href
+                break
+    except WebDriverException:
+        pass
+
+    return MapsListing(
+        name=name,
+        rating=rating,
+        review_count=review_count,
+        category=category,
+        website_url=website_url,
+        instagram_url=instagram_url,
+        phone=phone,
+        address=address,
+        has_hours=has_hours,
+        photo_count=photo_count,
+    )
 
 
 # --- Competitor metrics (Phase 4) -------------------------------------------
@@ -784,40 +933,75 @@ class CompetitorMetrics:
     review_count: int | None = None
     instagram_followers: int | None = None
     instagram_posts: int | None = None
+    # Self-heal hooks for the refresh job: when a competitor was tracked
+    # before the discovery scraper started returning website / IG fields
+    # (or via the manual-add fast path), its Competitor row has
+    # ``instagram_url=None`` and the IG metric scrape silently no-ops
+    # forever. The competitor metric scraper now extracts both off the
+    # Maps panel and exposes them here so the refresh job can patch the
+    # Competitor row when it finds them missing.
+    website_url: str | None = None
+    instagram_url: str | None = None
     error: str | None = None
 
 
+@dataclass
+class CompetitorScrapeTarget:
+    """Per-competitor input to the bulk metric fetcher.
+
+    The fetcher used to take just ``(competitor_id, maps_url)`` — direct
+    URL navigation only — and reliably failed to extract ``review_count``
+    for ~half of listings, because Google strips the F7nice review-count
+    span when you arrive at a place page via the long
+    ``/maps/place/.../data=!...!rclk=1`` URLs the discovery scraper
+    persists. The user-audit path doesn't hit this because it usually
+    arrives via a search query, which Google treats as a fresh user
+    interaction and renders the full panel for.
+
+    Adding ``name`` + ``city`` lets the competitor fetcher follow the
+    same search-by-name flow. ``maps_url`` stays as the fallback for
+    when the search resolves to a different listing (place_id
+    mismatch) or when name/city aren't available.
+    """
+
+    competitor_id: int
+    maps_url: str | None
+    name: str | None = None
+    city: str | None = None
+
+
 async def fetch_competitor_metrics(
-    competitors: list[tuple[int, str]],
+    competitors: list[CompetitorScrapeTarget],
     *,
     progress: ProgressCb = None,
 ) -> list[CompetitorMetrics]:
-    """Pull rating + review_count for each (competitor_id, maps_url) pair.
+    """Pull rating + review_count + IG panel signals per competitor.
 
-    Opens a single Chrome driver and visits the URLs sequentially — that's
-    cheaper than re-acquiring the driver semaphore per competitor on a small
-    VPS, and matches the per-process concurrency cap (one driver at a time).
+    Opens a single Chrome driver and visits each listing sequentially —
+    that's cheaper than re-acquiring the driver semaphore per
+    competitor on a small VPS, and matches the per-process concurrency
+    cap (one driver at a time).
     """
     return await asyncio.to_thread(_fetch_competitor_metrics_sync, competitors, progress)
 
 
 def _fetch_competitor_metrics_sync(
-    competitors: list[tuple[int, str]], progress: ProgressCb = None
+    competitors: list[CompetitorScrapeTarget], progress: ProgressCb = None
 ) -> list[CompetitorMetrics]:
     results: list[CompetitorMetrics] = []
     if not competitors:
         return results
 
     with chrome_driver() as driver:
-        for competitor_id, maps_url in competitors:
-            _emit(progress, "competitor_started", {"competitor_id": competitor_id})
-            metric = _scrape_one_competitor(driver, competitor_id, maps_url)
+        for target in competitors:
+            _emit(progress, "competitor_started", {"competitor_id": target.competitor_id})
+            metric = _scrape_one_competitor(driver, target)
             results.append(metric)
             _emit(
                 progress,
                 "competitor_finished",
                 {
-                    "competitor_id": competitor_id,
+                    "competitor_id": target.competitor_id,
                     "rating": metric.rating,
                     "review_count": metric.review_count,
                     "error": metric.error,
@@ -827,63 +1011,93 @@ def _fetch_competitor_metrics_sync(
 
 
 def _scrape_one_competitor(
-    driver: WebDriver, competitor_id: int, maps_url: str
+    driver: WebDriver, target: CompetitorScrapeTarget
 ) -> CompetitorMetrics:
-    try:
-        driver.get(maps_url)
-    except TimeoutException as exc:
-        return CompetitorMetrics(competitor_id=competitor_id, error=f"timeout: {exc}")
-    except WebDriverException as exc:
-        return CompetitorMetrics(competitor_id=competitor_id, error=f"load failed: {exc}")
+    """Scrape one competitor's Maps listing using the same multi-strategy
+    flow the user audit uses.
 
-    try:
-        WebDriverWait(driver, PANEL_WAIT_S).until(
-            EC.presence_of_element_located((By.TAG_NAME, "h1"))
-        )
-    except TimeoutException:
-        pass
+    Strategy order:
+      1. **Search-by-name** when ``name`` + ``city`` are present. This
+         is what produces working ``review_count`` for the user audit
+         path; Google treats search-driven navigation as a fresh user
+         interaction and renders the full F7nice DOM. After landing,
+         we extract the place_id from the resolved URL and compare it
+         to the place_id embedded in the originally-tracked
+         ``maps_url`` — if they disagree, the search resolved to the
+         wrong listing (common name collisions like "Cafe Coffee Day")
+         and we fall through to strategy 2.
+      2. **Direct URL navigation** of the stored ``maps_url`` —
+         original behavior. Less reliable for review_count but always
+         hits the right listing.
 
-    # Hop-twice: same trick as ``_audit_maps_sync``. When the user
-    # manually supplied a ``/maps/search/...`` URL (slow-path competitor
-    # add), Google resolves it to a ``/maps/place/...`` page but strips
-    # the review-count span on that resolution. Re-navigating to the
-    # resolved URL fresh restores the full DOM. The h1-wait above fires
-    # before Google's JS replaces the URL, so we wait briefly for the
-    # transition before reading ``current_url``.
-    try:
+    Returns ``CompetitorMetrics`` with whatever fields we read; missing
+    data is ``None``, not an error. ``error`` is set only when the
+    scrape couldn't make progress at all (driver failure, CAPTCHA).
+    """
+    competitor_id = target.competitor_id
+    expected_place_id = _extract_place_id(target.maps_url)
+
+    # Strategy 1: search-by-name.
+    if target.name and target.city:
+        search_url = _build_search_url(target.name, target.city)
         try:
-            WebDriverWait(driver, 4).until(
-                lambda d: "/maps/place/" in d.current_url
+            found = _navigate_to_listing_panel(driver, search_url)
+        except Exception as exc:  # CaptchaDetected or other
+            # Try the fallback rather than failing the whole row —
+            # CAPTCHA on a search query doesn't necessarily mean a
+            # direct-URL load will fail too (different fingerprint).
+            logger.warning(
+                "competitor search-by-name failed for %r: %s; falling back to direct URL",
+                target.name, exc,
             )
-        except TimeoutException:
-            pass
-        here = driver.current_url
-        if "/maps/place/" in here and here != maps_url:
-            driver.get(here)
-            try:
-                WebDriverWait(driver, PANEL_WAIT_S).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "h1"))
+            found = False
+
+        if found:
+            landed_place_id = _extract_place_id(driver.current_url)
+            if (
+                not expected_place_id
+                or not landed_place_id
+                or landed_place_id == expected_place_id
+            ):
+                # Same listing (or no place_id to verify against). Extract.
+                _wait_for_review_span(driver)
+                fields = extract_listing_fields(driver)
+                return CompetitorMetrics(
+                    competitor_id=competitor_id,
+                    name=fields.name,
+                    rating=fields.rating,
+                    review_count=fields.review_count,
+                    website_url=fields.website_url,
+                    instagram_url=fields.instagram_url,
                 )
-            except TimeoutException:
-                pass
-    except WebDriverException:
-        pass
+            else:
+                logger.info(
+                    "competitor search resolved to wrong listing (expected place_id=%s, "
+                    "got %s) — falling back to direct URL for competitor_id=%s",
+                    expected_place_id, landed_place_id, competitor_id,
+                )
+
+    # Strategy 2: direct URL navigation (fallback).
+    if not target.maps_url:
+        return CompetitorMetrics(
+            competitor_id=competitor_id,
+            error="no maps_url and search-by-name not available",
+        )
 
     try:
-        detect_captcha(driver)
-    except Exception as exc:
+        found = _navigate_to_listing_panel(driver, target.maps_url)
+    except Exception as exc:  # CaptchaDetected
         return CompetitorMetrics(competitor_id=competitor_id, error=f"captcha: {exc}")
+    if not found:
+        return CompetitorMetrics(competitor_id=competitor_id, error="panel did not load")
 
-    name = _safe_text(driver, By.CSS_SELECTOR, "h1")
-    page_source = ""
-    try:
-        page_source = driver.page_source
-    except WebDriverException:
-        pass
-    rating, review_count = _parse_rating_and_reviews(driver, page_source)
+    _wait_for_review_span(driver)
+    fields = extract_listing_fields(driver)
     return CompetitorMetrics(
         competitor_id=competitor_id,
-        name=name,
-        rating=rating,
-        review_count=review_count,
+        name=fields.name,
+        rating=fields.rating,
+        review_count=fields.review_count,
+        website_url=fields.website_url,
+        instagram_url=fields.instagram_url,
     )

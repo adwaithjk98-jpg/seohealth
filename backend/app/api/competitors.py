@@ -367,37 +367,56 @@ def get_business_trends(
     )
     audit_ids = [a.id for a in audits]
 
+    # Build per-audit lookups for *both* pillars we draw from. Earlier
+    # this endpoint only loaded the Maps section and tried to read
+    # ``instagram_followers`` / ``instagram_posts`` from Maps' raw_data,
+    # which never had them — the IG scraper writes ``followers`` /
+    # ``post_count`` to the *Instagram* section. Result: the user's-own
+    # IG follower / post trend lines were perma-null on every audit.
     maps_sections: dict[int, AuditSection] = {}
+    ig_sections: dict[int, AuditSection] = {}
     if audit_ids:
         rows: list[AuditSection] = (
             db.query(AuditSection)
             .filter(
                 AuditSection.audit_id.in_(audit_ids),
-                AuditSection.section == AuditSectionName.maps,
+                AuditSection.section.in_(
+                    [AuditSectionName.maps, AuditSectionName.instagram]
+                ),
             )
             .all()
         )
         for row in rows:
-            maps_sections[row.audit_id] = row
+            if row.section == AuditSectionName.maps:
+                maps_sections[row.audit_id] = row
+            elif row.section == AuditSectionName.instagram:
+                ig_sections[row.audit_id] = row
 
     business_points: list[TrendPoint] = []
     for audit in audits:
         maps = maps_sections.get(audit.id)
-        raw = (maps.raw_data_json or {}) if maps else {}
-        rating = raw.get("rating") if isinstance(raw, dict) else None
-        review_count = raw.get("review_count") if isinstance(raw, dict) else None
-        ig_followers = (
-            raw.get("instagram_followers") if isinstance(raw, dict) else None
+        ig = ig_sections.get(audit.id)
+        maps_raw = (maps.raw_data_json or {}) if maps else {}
+        ig_raw = (ig.raw_data_json or {}) if ig else {}
+        rating = maps_raw.get("rating") if isinstance(maps_raw, dict) else None
+        review_count = (
+            maps_raw.get("review_count") if isinstance(maps_raw, dict) else None
         )
-        ig_posts = raw.get("instagram_posts") if isinstance(raw, dict) else None
+        # IG keys live on the Instagram section, not the Maps one. The
+        # scraper at scrapers/instagram.py writes ``followers`` and
+        # ``post_count`` (not ``instagram_followers`` / ``instagram_posts``)
+        # — match those exact names.
+        ig_followers = ig_raw.get("followers") if isinstance(ig_raw, dict) else None
+        ig_posts = ig_raw.get("post_count") if isinstance(ig_raw, dict) else None
         if (
             rating is None
             and review_count is None
             and ig_followers is None
             and ig_posts is None
         ):
-            # Skip audits that couldn't read Maps at all — plotting all-null
-            # would just be a phantom point with no signal.
+            # Skip audits that produced nothing plottable — leaving a
+            # phantom point with no signal would just put a hole in the
+            # chart.
             continue
         business_points.append(
             TrendPoint(

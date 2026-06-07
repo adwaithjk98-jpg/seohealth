@@ -33,6 +33,12 @@ class RecommendationDraft:
     # a specific source: "missing IG handle" → ``fix_target='instagram'``.
     # Lets the read path drop recs whose target is an opted-out pillar.
     fix_target: str | None = None
+    # Stable key (e.g. ``website.has_meta_description``) that the
+    # fix-loop verifier uses to confirm the underlying signal is
+    # positive on a subsequent audit. None for recs we can't auto-
+    # verify — those still work, they just don't trigger a
+    # "Confirmed fix" moment when the next audit runs.
+    verify_signal: str | None = None
 
 
 @dataclass

@@ -32,7 +32,13 @@
         pathname.startsWith('/businesses')
       );
     }
-    if (key === 'overview') return pathname === '/dashboard' || pathname === '/dashboard/';
+    if (key === 'overview') {
+      return (
+        pathname === '/dashboard' ||
+        pathname === '/dashboard/' ||
+        pathname.startsWith('/dashboard/insights')
+      );
+    }
     return false;
   }
 </script>

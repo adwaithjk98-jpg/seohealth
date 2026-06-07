@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { goto, invalidateAll } from '$app/navigation';
-  import { fly, fade } from 'svelte/transition';
+  import { fly, fade, slide } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
@@ -20,7 +20,7 @@
 
   const subState = $derived(authState.user?.subscription_state ?? null);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
-  const isPaid = $derived(tier === 'paid');
+  const isPaid = $derived(tier !== 'free');
   // Phase 4.6 — the cap is now a total across all the user's businesses,
   // not per-business. `competitorLimit` reads straight from the tier
   // payload (paid: 4 today); the Hub counter mirrors it as `X / 4`.
@@ -28,6 +28,12 @@
   const atCap = $derived(competitorLimit > 0 && competitors.length >= competitorLimit);
 
   let manualAddOpen = $state(false);
+  // First insight is always visible; the rest live behind a "show N more"
+  // affordance below it. A bare collapse-everything toggle on the header
+  // hid the surface entirely, which read as "broken / empty" — this
+  // pattern keeps the hero card on screen so the user always has
+  // something to react to.
+  let insightsExpanded = $state(false);
 
   function openManualAdd() {
     manualAddOpen = true;
@@ -104,6 +110,44 @@
   /** @param {any} card */
   function metricUnit(card) {
     return card.fact.metric === 'rating' ? '★' : 'reviews';
+  }
+
+  /** Look up the user's business this card is about so the card can
+   * lead with the name rather than a bare "Your review count" — which
+   * is ambiguous when the user has more than one business. */
+  function businessNameForCard(/** @type {any} */ card) {
+    const b = businesses.find((/** @type {any} */ b) => b.id === card.business_id);
+    return b?.name ?? null;
+  }
+
+  /** Names of the competitors that actually contributed to this card's
+   * comparison — i.e. competitors tracked under the same user business
+   * with a non-null value for this card's metric. The backend's
+   * ``competitor_sample_size`` filters the same way, so this stays in
+   * sync without plumbing names through the API. */
+  function competitorNamesForCard(/** @type {any} */ card) {
+    const metric = card.fact.metric;
+    return competitors
+      .filter((/** @type {any} */ c) => c.business_id === card.business_id)
+      .filter((/** @type {any} */ c) =>
+        metric === 'rating' ? c.latest_rating != null : c.latest_review_count != null
+      )
+      .map((/** @type {any} */ c) => c.name);
+  }
+
+  /** "Slash Resto Cafe" · "Slash Resto Cafe and Kadalas Cafe" ·
+   * "Slash Resto Cafe, Kadalas Cafe, and Sixth Avenue Cafe". Falls back
+   * to the bare count if the lookup misses (e.g. competitor archived
+   * after the card was generated). */
+  function competitorListLabel(/** @type {any} */ card) {
+    const names = competitorNamesForCard(card);
+    if (names.length === 0) {
+      const n = card.fact.competitor_sample_size;
+      return `${n} ${n === 1 ? 'competitor' : 'competitors'}`;
+    }
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
   }
 
   /** @param {any} card */
@@ -257,9 +301,17 @@
     <!-- Insights — proper metric cards with the value as hero, the LLM -->
     <!-- (or deterministic) sentence underneath. Tinted by kind. -->
     <section aria-labelledby="insights-heading" class="space-y-3">
-      <div class="flex items-end justify-between">
-        <h2 id="insights-heading" class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
+      <div class="flex items-center justify-between gap-3">
+        <h2
+          id="insights-heading"
+          class="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-canvas-muted"
+        >
           Insights
+          {#if insightCards.length > 0 && !insightsLoading}
+            <span class="text-xs font-medium normal-case text-canvas-muted/80">
+              {insightCards.length}
+            </span>
+          {/if}
         </h2>
         {#if insightsLoading}
           <span
@@ -270,6 +322,82 @@
           </span>
         {/if}
       </div>
+
+      {#snippet insightCard(/** @type {any} */ card, /** @type {number} */ idx)}
+        {@const kind = card.fact.kind}
+        {@const cardClass =
+          kind === 'winning'
+            ? 'border-healthy-100 bg-gradient-to-br from-healthy-50/70 to-white'
+            : kind === 'matched'
+              ? 'border-canvas-soft bg-gradient-to-br from-canvas-soft/40 to-white'
+              : 'border-attention-100 bg-gradient-to-br from-attention-50/70 to-white'}
+        {@const badgeClass =
+          kind === 'winning'
+            ? 'bg-healthy-100 text-healthy-700'
+            : kind === 'matched'
+              ? 'bg-canvas-soft text-canvas-muted'
+              : 'bg-attention-100 text-attention-700'}
+        {@const dotClass =
+          kind === 'winning'
+            ? 'bg-healthy-500'
+            : kind === 'matched'
+              ? 'bg-canvas-muted'
+              : 'bg-attention-500'}
+        {@const deltaClass =
+          kind === 'winning'
+            ? 'text-healthy-700'
+            : kind === 'matched'
+              ? 'text-canvas-muted'
+              : 'text-attention-700'}
+        {@const badgeLabel =
+          kind === 'winning' ? 'Winning' : kind === 'matched' ? 'Matched' : 'Opportunity'}
+        {@const businessName = businessNameForCard(card)}
+        {@const competitorList = competitorListLabel(card)}
+        <article
+          class={`card relative overflow-hidden p-5 transition hover:shadow-md ${cardClass}`}
+          in:fly={{ y: 6, delay: 40 * idx, duration: 240, easing: quintOut }}
+        >
+          <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+            <div class="flex min-w-0 items-center gap-2">
+              {#if businessName}
+                <span class="truncate text-sm font-semibold tracking-tight text-canvas-ink">
+                  {businessName}
+                </span>
+              {/if}
+              <span
+                class={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${badgeClass}`}
+              >
+                <span class={`h-1.5 w-1.5 rounded-full ${dotClass}`}></span>
+                {badgeLabel}
+              </span>
+            </div>
+            <span class={`shrink-0 text-xs font-medium ${deltaClass}`}>
+              {deltaLabel(card)}
+            </span>
+          </div>
+
+          <p class="mt-4 text-xs font-medium uppercase tracking-wide text-canvas-muted">
+            {card.headline.split('·')[1]?.trim() ?? card.headline}
+          </p>
+          <p class="mt-1 flex items-baseline gap-1.5 text-canvas-ink">
+            <span class="text-3xl font-semibold tracking-tight">{metricValue(card)}</span>
+            <span class="text-sm text-canvas-muted">{metricUnit(card)}</span>
+          </p>
+
+          <p class="mt-4 text-sm leading-relaxed text-canvas-ink/80">{card.sentence}</p>
+
+          <p class="mt-4 border-t border-canvas-soft/70 pt-3 text-xs text-canvas-muted">
+            vs <span class="font-medium text-canvas-ink">{competitorList}</span>
+            · avg
+            <span class="font-medium text-canvas-ink">
+              {card.fact.metric === 'rating'
+                ? Number(card.fact.competitor_average).toFixed(1) + ' ★'
+                : Math.round(card.fact.competitor_average)}
+            </span>
+          </p>
+        </article>
+      {/snippet}
+
       {#if insightsError}
         <div
           class="rounded-2xl border border-action-100 bg-action-50 p-4 text-xs text-action-700 shadow-soft"
@@ -284,74 +412,57 @@
           We'll surface your top winning factor and biggest opportunity here once we have
           observations from both you and your competitors.
         </div>
+      {:else if insightCards.length === 1}
+        <!-- Only one insight to show — no expand affordance needed. -->
+        <div>
+          {@render insightCard(insightCards[0], 0)}
+        </div>
       {:else}
-        <div class="grid gap-3 sm:grid-cols-2">
-          {#each insightCards as card, idx (`${card.business_id}-${card.fact.metric}-${card.fact.kind}`)}
-            {@const kind = card.fact.kind}
-            {@const cardClass =
-              kind === 'winning'
-                ? 'border-healthy-100 bg-gradient-to-br from-healthy-50/70 to-white'
-                : kind === 'matched'
-                  ? 'border-canvas-soft bg-gradient-to-br from-canvas-soft/40 to-white'
-                  : 'border-attention-100 bg-gradient-to-br from-attention-50/70 to-white'}
-            {@const badgeClass =
-              kind === 'winning'
-                ? 'bg-healthy-100 text-healthy-700'
-                : kind === 'matched'
-                  ? 'bg-canvas-soft text-canvas-muted'
-                  : 'bg-attention-100 text-attention-700'}
-            {@const dotClass =
-              kind === 'winning'
-                ? 'bg-healthy-500'
-                : kind === 'matched'
-                  ? 'bg-canvas-muted'
-                  : 'bg-attention-500'}
-            {@const deltaClass =
-              kind === 'winning'
-                ? 'text-healthy-700'
-                : kind === 'matched'
-                  ? 'text-canvas-muted'
-                  : 'text-attention-700'}
-            {@const badgeLabel =
-              kind === 'winning' ? 'Winning' : kind === 'matched' ? 'Matched' : 'Opportunity'}
-            <article
-              class={`card relative overflow-hidden p-5 transition hover:shadow-md ${cardClass}`}
-              in:fly={{ y: 6, delay: 40 * idx, duration: 240, easing: quintOut }}
+        <div class="space-y-3">
+          {@render insightCard(insightCards[0], 0)}
+
+          {#if insightsExpanded}
+            <div transition:slide={{ duration: 220 }} class="space-y-3">
+              {#each insightCards.slice(1) as card, idx (`${card.business_id}-${card.fact.metric}-${card.fact.kind}`)}
+                {@render insightCard(card, idx + 1)}
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Reveal affordance: a centered pill rather than a full-width
+               strip, so it reads as a soft accent on the page palette
+               rather than a horizontal divider. Gradient pulls from the
+               same healthy/attention tones the cards above use. -->
+          <div class="flex justify-center pt-1">
+            <button
+              type="button"
+              aria-expanded={insightsExpanded}
+              aria-controls="insights-rest"
+              onclick={() => (insightsExpanded = !insightsExpanded)}
+              class="group inline-flex items-center gap-2 rounded-full border border-healthy-100 bg-gradient-to-b from-white to-healthy-50/70 px-5 py-2.5 text-xs font-medium text-healthy-700 shadow-sm transition hover:border-healthy-200 hover:from-healthy-50/40 hover:to-healthy-100/80 hover:shadow"
             >
-              <div class="flex items-center justify-between gap-3">
-                <span
-                  class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${badgeClass}`}
-                >
-                  <span class={`h-1.5 w-1.5 rounded-full ${dotClass}`}></span>
-                  {badgeLabel}
-                </span>
-                <span class={`text-xs font-medium ${deltaClass}`}>
-                  {deltaLabel(card)}
-                </span>
-              </div>
-
-              <p class="mt-4 text-xs font-medium uppercase tracking-wide text-canvas-muted">
-                {card.headline.split('·')[1]?.trim() ?? card.headline}
-              </p>
-              <p class="mt-1 flex items-baseline gap-1.5 text-canvas-ink">
-                <span class="text-3xl font-semibold tracking-tight">{metricValue(card)}</span>
-                <span class="text-sm text-canvas-muted">{metricUnit(card)}</span>
-              </p>
-
-              <p class="mt-4 text-sm leading-relaxed text-canvas-ink/80">{card.sentence}</p>
-
-              <p class="mt-4 border-t border-canvas-soft/70 pt-3 text-xs text-canvas-muted">
-                Competitor avg
-                <span class="font-medium text-canvas-ink">
-                  {card.fact.metric === 'rating'
-                    ? Number(card.fact.competitor_average).toFixed(1) + ' ★'
-                    : Math.round(card.fact.competitor_average)}
-                </span>
-                · {card.fact.competitor_sample_size}
-                {card.fact.competitor_sample_size === 1 ? 'competitor' : 'competitors'}
-              </p>
-            </article>
-          {/each}
+              <span>
+                {insightsExpanded
+                  ? 'Show less'
+                  : `Show ${insightCards.length - 1} more ${insightCards.length - 1 === 1 ? 'insight' : 'insights'}`}
+              </span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class={`h-3.5 w-3.5 transition-transform duration-200 ${
+                  insightsExpanded ? 'rotate-180' : ''
+                }`}
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
         </div>
       {/if}
     </section>

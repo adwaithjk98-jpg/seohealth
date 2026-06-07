@@ -10,7 +10,6 @@
     getLatestAuditForBusiness,
     startAudit,
     archiveBusiness,
-    setBusinessSchedule,
     getBusiness
   } from '$lib/api.js';
   import {
@@ -22,9 +21,9 @@
   } from '$lib/dashboard.js';
   import ScoreGauge from '$lib/components/ScoreGauge.svelte';
   import SectionCard from '$lib/components/SectionCard.svelte';
-  import CompetitorsSection from '$lib/components/CompetitorsSection.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import BusinessProfileBanner from '$lib/components/BusinessProfileBanner.svelte';
+  import SinceLastCheckStrip from '$lib/components/SinceLastCheckStrip.svelte';
 
   // /businesses/{id} is the canonical, audit-id-independent dashboard URL
   // (m6/s5). Bookmarks here survive every re-audit — they always resolve
@@ -94,43 +93,20 @@
   const totalDone = $derived(audit?.done_recommendations_count ?? 0);
   const auditId = $derived(audit?.audit_id ?? null);
 
-  // Competitors section (Phase 4) reads the user's plan to switch between
-  // upsell-for-free and the real form for paid. Mirrors the gate used on
-  // /dashboard for the auto-audit banner.
   const subState = $derived(authState.user?.subscription_state ?? null);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
-  const competitorLimit = $derived(subState?.limits?.competitors ?? 0);
 
   let archiving = $state(false);
   let archiveError = $state(/** @type {string | null} */ (null));
   let confirmingArchive = $state(false);
 
-  // Auto-audit schedule — paid-only. Backend rejects free-tier writes
-  // with 402 (api/businesses.set_business_schedule); we also gate the
-  // UI so free users can't kick off a doomed request.
-  const isPaid = $derived(tier === 'paid');
+  // Cadence is owned by /dashboard/audit now — this page just renders
+  // a read-only line. Keeping the derived values for the inline copy.
+  const isPaid = $derived(tier !== 'free');
   const cadence = $derived(business?.audit_schedule_cadence ?? null);
   const nextAuditAt = $derived(business?.next_auto_audit_at ?? null);
-  let scheduleSaving = $state(/** @type {string | null} */ (null));
-  let scheduleError = $state(/** @type {string | null} */ (null));
-
-  /** @param {'weekly' | 'biweekly' | 'monthly' | null} next */
-  async function handleSetSchedule(next) {
-    if (!business?.id || scheduleSaving) return;
-    if (cadence === next) return;
-    scheduleSaving = next ?? 'off';
-    scheduleError = null;
-    try {
-      business = await setBusinessSchedule(business.id, next);
-    } catch (err) {
-      scheduleError = err instanceof Error ? err.message : 'Could not save your schedule.';
-    } finally {
-      scheduleSaving = null;
-    }
-  }
 
   /** Format a UTC-naive ISO from the backend as a friendly day label.
-   *  Mirrors the dashboard's ``formatAuditDate``.
    *  @param {string | null | undefined} value */
   function formatScheduleDate(value) {
     if (!value) return null;
@@ -143,13 +119,6 @@
       year: 'numeric'
     });
   }
-
-  const cadenceOptions = /** @type {const} */ ([
-    { value: null, label: 'Off' },
-    { value: 'weekly', label: 'Weekly' },
-    { value: 'biweekly', label: 'Bi-weekly' },
-    { value: 'monthly', label: 'Monthly' }
-  ]);
 
   async function handleArchive() {
     if (!audit?.business?.id || archiving) return;
@@ -213,86 +182,31 @@
   }
 </script>
 
-{#snippet scheduleCard()}
-  <section class="card border border-canvas-soft bg-white p-5 sm:p-6" aria-labelledby="schedule-heading">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div class="min-w-0">
-        <p id="schedule-heading" class="text-sm font-semibold text-canvas-ink">
-          Auto-audit schedule
-        </p>
-        <p class="mt-1 text-xs text-canvas-muted">
-          Re-check this business on a cadence and email you when the score moves.
-        </p>
-      </div>
-      {#if isPaid && cadence}
-        <span
-          class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-healthy-50 px-2.5 py-0.5 text-xs font-medium text-healthy-700"
-        >
-          <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
-          On · {cadence}
-        </span>
+{#snippet scheduleLine()}
+  <!-- Compact, read-only summary. Cadence is owned by the Audit tab —
+       tapping "Manage" deep-links over so users have one place to
+       configure rather than per-business cards everywhere. -->
+  {#if isPaid}
+    <p class="text-xs text-canvas-muted">
+      {#if cadence && nextAuditAt}
+        Next auto-audit on
+        <span class="font-medium text-canvas-ink">{formatScheduleDate(nextAuditAt)}</span>
+        · <a href="/dashboard/audit" class="font-medium text-healthy-700 hover:underline">
+          manage schedules
+        </a>
+      {:else if cadence}
+        Schedule saved — first run lands in your weekly quota window
+        · <a href="/dashboard/audit" class="font-medium text-healthy-700 hover:underline">
+          manage
+        </a>
+      {:else}
+        No auto-audit schedule.
+        <a href="/dashboard/audit" class="font-medium text-healthy-700 hover:underline">
+          Set one up →
+        </a>
       {/if}
-    </div>
-
-    <div
-      role="radiogroup"
-      aria-label="Audit cadence"
-      class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"
-    >
-      {#each cadenceOptions as opt}
-        {@const selected = cadence === opt.value}
-        {@const saving = scheduleSaving === (opt.value ?? 'off')}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={selected}
-          disabled={!isPaid || scheduleSaving !== null}
-          onclick={() => handleSetSchedule(opt.value)}
-          class={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
-            selected
-              ? 'border-healthy-300 bg-healthy-50 text-healthy-700'
-              : 'border-canvas-soft bg-white text-canvas-ink hover:border-canvas-muted/40'
-          } ${!isPaid ? 'cursor-not-allowed opacity-60' : ''}`}
-        >
-          {saving ? 'Saving…' : opt.label}
-        </button>
-      {/each}
-    </div>
-
-    {#if isPaid}
-      <p class="mt-3 text-xs text-canvas-muted">
-        {#if cadence && nextAuditAt}
-          Next auto-audit on
-          <span class="font-medium text-canvas-ink">{formatScheduleDate(nextAuditAt)}</span>.
-          Scheduled audits share your weekly audit quota.
-        {:else if cadence}
-          Schedule saved — we'll fit the first run into your weekly quota.
-        {:else}
-          Off — we'll only re-check this business when you ask us to.
-        {/if}
-      </p>
-    {:else}
-      <div
-        class="mt-3 flex flex-col gap-2 rounded-xl border border-attention-100 bg-attention-50/70 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between"
-      >
-        <p class="text-canvas-ink">
-          <span class="font-medium">Scheduling is a paid feature.</span>
-          Upgrade to let us re-check this business automatically.
-        </p>
-        <a class="btn-primary text-xs" href="/billing">Upgrade</a>
-      </div>
-    {/if}
-
-    {#if scheduleError}
-      <p
-        class="mt-3 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700"
-        in:fade={{ duration: 180 }}
-        role="alert"
-      >
-        {scheduleError}
-      </p>
-    {/if}
-  </section>
+    </p>
+  {/if}
 {/snippet}
 
 {#if status === 'loading'}
@@ -326,6 +240,8 @@
   </section>
 {:else if status === 'no_audit'}
   <section class="mx-auto mt-10 max-w-md space-y-6" in:fade={{ duration: 240 }}>
+    <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back to your businesses</a>
+
     {#if business}
       <BusinessProfileBanner
         {business}
@@ -357,7 +273,7 @@
     </div>
 
     {#if business}
-      {@render scheduleCard()}
+      {@render scheduleLine()}
     {/if}
   </section>
 {:else if status === 'error'}
@@ -384,6 +300,8 @@
   </section>
 {:else if audit}
   <section class="space-y-10">
+    <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back to your businesses</a>
+
     {#if business}
       <BusinessProfileBanner
         {business}
@@ -421,6 +339,10 @@
         />
       </div>
     </header>
+
+    {#if audit.since_last_check}
+      <SinceLastCheckStrip data={audit.since_last_check} />
+    {/if}
 
     <section>
       <div class="flex items-end justify-between gap-3">
@@ -498,17 +420,8 @@
       </section>
     {/if}
 
-    {#if audit.business?.id}
-      <CompetitorsSection
-        businessId={audit.business.id}
-        businessName={audit.business?.name || 'Your business'}
-        {tier}
-        {competitorLimit}
-      />
-    {/if}
-
     {#if business}
-      {@render scheduleCard()}
+      {@render scheduleLine()}
     {/if}
 
     <footer

@@ -54,6 +54,10 @@ class BusinessResponse(BaseModel):
     latest_audit_id: int | None = None
     latest_audit_finished_at: datetime | None = None
     running_audit_id: int | None = None
+    # Open recommendations on the latest completed audit. Surfaces on
+    # the dashboard "View all insights" card so the user sees a real
+    # number worth tapping for, instead of generic copy.
+    open_recommendations_count: int = 0
     # Opt-in auto-audit settings. ``audit_schedule_cadence`` is set by the
     # user via PATCH /businesses/{id}/schedule; ``next_auto_audit_at`` is
     # the computed firing time (``null`` when no cadence is set).

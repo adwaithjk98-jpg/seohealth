@@ -5,20 +5,27 @@
   import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
-  import { getAuditQuota, startAudit } from '$lib/api.js';
+  import { getAuditQuota, setBusinessSchedule, startAudit } from '$lib/api.js';
   import { formatRelativeTime } from '$lib/dashboard.js';
 
   /** @type {{ data: { businesses: any[] | null, error: string | null } }} */
   let { data } = $props();
 
-  const businesses = $derived(data?.businesses ?? []);
+  // Local copy of the businesses list so cadence edits update in place
+  // without a full page reload. We re-seed from `data.businesses`
+  // whenever the loader hands us a fresh array.
+  let businesses = $state(/** @type {any[]} */ (data?.businesses ?? []));
+  $effect(() => {
+    businesses = /** @type {any[]} */ (data?.businesses ?? []);
+  });
+
   const errorMessage = $derived(
     data?.error && data.error !== 'unauthenticated' ? data.error : null
   );
 
   const subState = $derived(authState.user?.subscription_state ?? null);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
-  const isPaid = $derived(tier === 'paid');
+  const isPaid = $derived(tier !== 'free');
 
   // --- Quota ---
   let quota = $state(
@@ -57,7 +64,56 @@
     });
   }
 
-  // --- Run audit ---
+  /** Same format helper but day-precision — used for the schedule rows
+   * where the time of day adds noise. */
+  function formatScheduleDate(/** @type {string | null} */ value) {
+    if (!value) return null;
+    const iso = /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    });
+  }
+
+  // --- Inline schedule editing ---
+  // The Audit tab is now the single source of truth for cadence — the
+  // per-business detail page only shows a read-only line linking back
+  // here. Each row tracks its own saving state so concurrent edits on
+  // different businesses don't block each other.
+  /** @type {Record<number, string | null>} */
+  let scheduleSaving = $state({});
+  /** @type {Record<number, string>} */
+  let scheduleError = $state({});
+
+  const cadenceOptions = /** @type {const} */ ([
+    { value: null, label: 'Off' },
+    { value: 'weekly', label: 'Weekly' },
+    { value: 'biweekly', label: 'Bi-weekly' },
+    { value: 'monthly', label: 'Monthly' }
+  ]);
+
+  /** @param {any} biz @param {'weekly' | 'biweekly' | 'monthly' | null} next */
+  async function handleSetCadence(biz, next) {
+    if (!isPaid || scheduleSaving[biz.id]) return;
+    if (biz.audit_schedule_cadence === next) return;
+    scheduleSaving = { ...scheduleSaving, [biz.id]: next ?? 'off' };
+    scheduleError = { ...scheduleError, [biz.id]: '' };
+    try {
+      const updated = await setBusinessSchedule(biz.id, next);
+      businesses = businesses.map((b) => (b.id === biz.id ? { ...b, ...updated } : b));
+    } catch (err) {
+      scheduleError = {
+        ...scheduleError,
+        [biz.id]: err instanceof Error ? err.message : 'Could not save your schedule.'
+      };
+    } finally {
+      scheduleSaving = { ...scheduleSaving, [biz.id]: null };
+    }
+  }
+
+  // --- Manual audits ---
   /** @type {Record<number, 'idle' | 'starting'>} */
   let runState = $state({});
   /** @type {Record<number, string>} */
@@ -70,73 +126,14 @@
     runError = { ...runError, [biz.id]: '' };
     try {
       const result = await startAudit(biz.id);
-      // Jump straight to the audit detail so the user sees progress
-      // streaming live — same handoff the dashboard tile uses.
       await goto(`/audits/${result.audit_id}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not start audit.';
       runError = { ...runError, [biz.id]: message };
       runState = { ...runState, [biz.id]: 'idle' };
-      // Refresh quota in case the failure was a 429 — the counter on
-      // screen should match server state.
       await loadQuota();
     }
   }
-
-  // --- Audit all ---
-  // Eligible = no audit currently in flight for that business. We
-  // skip businesses with ``running_audit_id`` so the bulk action
-  // doesn't 409 the user on rows that are already mid-audit.
-  const auditAllEligible = $derived(
-    /** @type {any[]} */ (businesses).filter(
-      (/** @type {any} */ b) => !b.running_audit_id
-    )
-  );
-  const auditAllCost = $derived(auditAllEligible.length);
-  // Won't burn through quota partially — only run when the user has
-  // enough slots for all eligible businesses. Saves the awkward
-  // "audited 2 of 3, the third failed with 429" UX.
-  const canAuditAll = $derived(
-    quota != null && auditAllCost > 0 && quota.remaining >= auditAllCost
-  );
-
-  let auditAllRunning = $state(false);
-  let auditAllError = $state(/** @type {string | null} */ (null));
-
-  async function handleAuditAll() {
-    if (!canAuditAll || auditAllRunning) return;
-    auditAllRunning = true;
-    auditAllError = null;
-    try {
-      // Sequential, not parallel — the worker pool runs one job at a
-      // time anyway, and serial keeps the per-row UI state honest as
-      // each enqueue settles.
-      for (const biz of auditAllEligible) {
-        runState = { ...runState, [biz.id]: 'starting' };
-        runError = { ...runError, [biz.id]: '' };
-        try {
-          await startAudit(biz.id);
-        } catch (err) {
-          runError = {
-            ...runError,
-            [biz.id]: err instanceof Error ? err.message : 'Could not start audit.'
-          };
-          runState = { ...runState, [biz.id]: 'idle' };
-        }
-      }
-      await loadQuota();
-      await invalidateAll();
-    } finally {
-      auditAllRunning = false;
-    }
-  }
-
-  // --- Scheduled panel data ---
-  // Auto-audits are paid-only (see services/auto_audit.py). Each
-  // business has `next_auto_audit_at` set by the scheduler when active.
-  const scheduledBusinesses = $derived(
-    businesses.filter((/** @type {any} */ b) => b.next_auto_audit_at != null)
-  );
 
   $effect(() => {
     if (authState.loaded && authState.user) {
@@ -164,8 +161,8 @@
       Audits
     </h1>
     <p class="mt-2 max-w-2xl text-sm leading-relaxed text-canvas-muted">
-      Run a fresh health check on any of your businesses, or set a schedule on each one so we
-      keep checking in the background.
+      Set a cadence and we'll keep an eye on things. Run a manual audit anytime you want a
+      fresh look.
     </p>
   </header>
 
@@ -195,68 +192,178 @@
       <a class="btn-primary w-full sm:w-auto" href="/">Add a business</a>
     </div>
   {:else}
-    <!-- ===== Quota card ===== -->
-    <section
-      class="card border-healthy-100 bg-gradient-to-br from-healthy-50/60 to-white p-6 sm:p-7"
-      in:fade={{ duration: 220 }}
-    >
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">
-            Audits this week
-          </p>
-          {#if quota}
-            <p class="mt-2 flex items-baseline gap-1.5 text-canvas-ink">
-              <span class="text-4xl font-semibold tracking-tight">{quota.remaining}</span>
-              <span class="text-sm text-canvas-muted">
-                of {quota.limit} remaining
-              </span>
+    <!-- ===== HERO: Schedule auto-audits ===== -->
+    {#if isPaid}
+      <section
+        class="card border-healthy-100 bg-gradient-to-br from-healthy-50/70 via-attention-50/30 to-white p-5 sm:p-7"
+        in:fade={{ duration: 220 }}
+      >
+        <div class="flex items-start gap-4">
+          <span
+            class="relative grid h-12 w-12 shrink-0 place-items-center"
+            aria-hidden="true"
+          >
+            <span class="absolute inset-0 animate-pulse rounded-full bg-healthy-200/40"></span>
+            <span
+              class="relative grid h-10 w-10 place-items-center rounded-full bg-white text-healthy-700 shadow-sm"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-5 w-5"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5l3 2" />
+              </svg>
+            </span>
+          </span>
+          <div class="min-w-0 flex-1">
+            <p
+              class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-healthy-700"
+            >
+              <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+              Auto-audit schedule
+            </p>
+            <p class="mt-1 text-base font-semibold tracking-tight text-canvas-ink sm:text-lg">
+              Set it once. We'll do the watching.
             </p>
             <p class="mt-1 text-xs text-canvas-muted">
-              {quota.used} used · resets {formatReset(quota.period_end)}
+              Pick a cadence per business — we re-check on that rhythm and email you only when
+              scores move.
             </p>
-          {:else if quotaLoading}
-            <p class="mt-2 text-sm text-canvas-muted">Loading quota…</p>
-          {:else if quotaError}
-            <p class="mt-2 text-sm text-action-700">{quotaError}</p>
-          {/if}
+          </div>
         </div>
-        <span
-          class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-            atCap
-              ? 'bg-attention-100 text-attention-700'
-              : 'bg-healthy-100 text-healthy-700'
-          }`}
-        >
-          <span
-            class={`h-1.5 w-1.5 rounded-full ${
-              atCap ? 'bg-attention-500' : 'bg-healthy-500'
-            }`}
-          ></span>
-          {atCap ? 'At plan limit' : 'Ready to run'}
-        </span>
-      </div>
 
-      {#if quota}
-        <div
-          class="mt-5 h-2 w-full overflow-hidden rounded-full bg-canvas-soft"
-          role="progressbar"
-          aria-valuemin="0"
-          aria-valuemax={quota.limit}
-          aria-valuenow={quota.used}
-        >
+        <ul class="mt-5 space-y-3">
+          {#each businesses as biz, i (biz.id)}
+            {@const cadence = biz.audit_schedule_cadence ?? null}
+            {@const next = biz.next_auto_audit_at}
+            {@const saving = scheduleSaving[biz.id] ?? null}
+            <li
+              class="rounded-2xl border border-canvas-soft bg-white p-4 shadow-sm"
+              in:fly={{ y: 6, delay: 30 * i, duration: 220, easing: quintOut }}
+            >
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold text-canvas-ink">{biz.name}</p>
+                  <p class="text-xs text-canvas-muted">
+                    {biz.city}{biz.country ? ` · ${biz.country}` : ''}
+                  </p>
+                </div>
+                {#if cadence && next}
+                  <span
+                    class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-healthy-50 px-2.5 py-0.5 text-xs font-medium text-healthy-700"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+                    Next {formatScheduleDate(next)}
+                  </span>
+                {:else if cadence}
+                  <span
+                    class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-healthy-50 px-2.5 py-0.5 text-xs font-medium text-healthy-700"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+                    On · {cadence}
+                  </span>
+                {/if}
+              </div>
+
+              <div
+                role="radiogroup"
+                aria-label={`Cadence for ${biz.name}`}
+                class="mt-3 grid grid-cols-4 gap-1.5"
+              >
+                {#each cadenceOptions as opt}
+                  {@const selected = cadence === opt.value}
+                  {@const isSaving = saving === (opt.value ?? 'off')}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    disabled={saving !== null}
+                    onclick={() => handleSetCadence(biz, opt.value)}
+                    class={`min-h-[36px] rounded-xl border px-2 py-1.5 text-xs font-medium transition ${
+                      selected
+                        ? 'border-healthy-300 bg-healthy-50 text-healthy-700'
+                        : 'border-canvas-soft bg-white text-canvas-ink hover:border-canvas-muted/40'
+                    } disabled:cursor-wait disabled:opacity-70`}
+                  >
+                    {isSaving ? '…' : opt.label}
+                  </button>
+                {/each}
+              </div>
+
+              {#if scheduleError[biz.id]}
+                <p
+                  class="mt-2 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700"
+                  role="alert"
+                  in:fade={{ duration: 160 }}
+                >
+                  {scheduleError[biz.id]}
+                </p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {:else}
+      <!-- Free-tier upsell — still leads, framed as the calmer default. -->
+      <section
+        class="card relative overflow-hidden border-healthy-100 bg-gradient-to-br from-healthy-50/70 via-attention-50/30 to-white p-6 sm:p-7"
+        in:fade={{ duration: 220 }}
+      >
+        <div class="flex items-start gap-4">
           <div
-            class={`h-full rounded-full transition-[width] duration-300 ease-out ${
-              atCap ? 'bg-attention-500' : 'bg-healthy-500'
-            }`}
-            style={`width: ${Math.min(100, (quota.used / Math.max(1, quota.limit)) * 100)}%`}
-          ></div>
+            class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-2xl shadow-sm"
+            aria-hidden="true"
+          >
+            🔒
+          </div>
+          <div class="min-w-0 flex-1">
+            <p
+              class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-healthy-700"
+            >
+              <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+              Auto-audit schedule
+            </p>
+            <p class="mt-1 text-base font-semibold tracking-tight text-canvas-ink sm:text-lg">
+              Let us watch for you.
+            </p>
+            <p class="mt-1 max-w-md text-xs text-canvas-muted">
+              Paid plans re-check each business on a cadence — weekly, bi-weekly or monthly — and
+              email you only when your score moves.
+            </p>
+            <a class="btn-primary mt-3 inline-flex" href="/billing">See paid plan</a>
+          </div>
         </div>
-      {/if}
+      </section>
+    {/if}
+
+    <!-- ===== Manual audits ===== -->
+    <section class="space-y-3">
+      <div class="flex flex-wrap items-end justify-between gap-2">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
+          Or run an audit now
+        </h2>
+        {#if quota}
+          <p class="text-xs text-canvas-muted">
+            <span class="font-medium text-canvas-ink">{quota.remaining}</span>
+            of {quota.limit} left this week · resets {formatReset(quota.period_end)}
+          </p>
+        {:else if quotaLoading}
+          <p class="text-xs text-canvas-muted">Loading quota…</p>
+        {:else if quotaError}
+          <p class="text-xs text-action-700">{quotaError}</p>
+        {/if}
+      </div>
 
       {#if atCap}
         <p
-          class="mt-4 rounded-xl bg-attention-50 px-3 py-2 text-xs text-attention-700"
+          class="rounded-xl bg-attention-50 px-3 py-2 text-xs text-attention-700"
           transition:fade={{ duration: 180 }}
         >
           You've used every audit in your weekly allowance. A slot reopens
@@ -269,102 +376,24 @@
           {/if}
         </p>
       {/if}
-    </section>
-
-    <!-- ===== Run an audit ===== -->
-    <section class="space-y-3">
-      <div class="flex flex-wrap items-end justify-between gap-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
-          Run an audit
-        </h2>
-        <span class="text-xs text-canvas-muted">
-          {businesses.length}
-          {businesses.length === 1 ? 'business' : 'businesses'}
-        </span>
-      </div>
-
-      <!-- Audit-all action: only meaningful with 2+ businesses (the
-           single-business case is just the per-row Run button below).
-           The button copy is exact about how many slots will get used
-           — no surprise 429s, no ambiguous "audit everything?" -->
-      {#if businesses.length > 1}
-        <div
-          class="card flex flex-col gap-2 border-healthy-100 bg-healthy-50/40 p-4 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div class="min-w-0">
-            <p class="text-sm font-medium text-canvas-ink">
-              Audit all {auditAllEligible.length}
-              {auditAllEligible.length === 1 ? 'business' : 'businesses'} at once
-            </p>
-            <p class="mt-0.5 text-xs text-canvas-muted">
-              {#if !canAuditAll && quota}
-                Needs {auditAllCost} of your {quota.remaining} remaining audit
-                {quota.remaining === 1 ? 'slot' : 'slots'} — not enough room this week.
-              {:else if auditAllCost > 0}
-                Will use {auditAllCost} of your {quota?.remaining ?? '—'} remaining audit
-                {auditAllCost === 1 ? 'slot' : 'slots'}.
-              {:else}
-                All businesses already have an audit in flight.
-              {/if}
-            </p>
-            {#if auditAllError}
-              <p class="mt-1 text-xs text-action-700">{auditAllError}</p>
-            {/if}
-          </div>
-          <button
-            type="button"
-            class="btn-primary whitespace-nowrap"
-            onclick={handleAuditAll}
-            disabled={!canAuditAll || auditAllRunning}
-          >
-            {#if auditAllRunning}
-              <span class="inline-flex items-center gap-2">
-                <span
-                  class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
-                  aria-hidden="true"
-                ></span>
-                Starting all…
-              </span>
-            {:else}
-              ↻ Audit all
-            {/if}
-          </button>
-        </div>
-      {/if}
 
       <ul class="space-y-3">
         {#each businesses as biz, i (biz.id)}
           {@const running = !!biz.running_audit_id}
           {@const starting = runState[biz.id] === 'starting'}
           {@const disabled = atCap || running || starting}
-          <li in:fly={{ y: 6, delay: 30 * i, duration: 240, easing: quintOut }}>
+          <li in:fly={{ y: 6, delay: 30 * i, duration: 220, easing: quintOut }}>
             <div
-              class="card flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between"
+              class="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
             >
               <div class="min-w-0 flex-1">
                 <p class="truncate text-base font-semibold tracking-tight text-canvas-ink">
                   {biz.name}
                 </p>
-                <p class="mt-0.5 text-xs text-canvas-muted">
-                  {biz.city}{biz.country ? ` · ${biz.country}` : ''}
-                </p>
-                <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                  {#if biz.latest_grade}
-                    <span
-                      class="inline-flex items-center rounded-full bg-healthy-50 px-2 py-0.5 font-medium text-healthy-700"
-                    >
-                      {biz.latest_grade}
-                      {#if biz.latest_score != null}
-                        · {biz.latest_score}/100
-                      {/if}
-                    </span>
-                  {/if}
+                <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-canvas-muted">
+                  <span>{biz.city}{biz.country ? ` · ${biz.country}` : ''}</span>
                   {#if biz.latest_audit_finished_at}
-                    <span class="text-canvas-muted">
-                      Last audit {formatRelativeTime(biz.latest_audit_finished_at)}
-                    </span>
-                  {:else}
-                    <span class="text-canvas-muted">No audits yet</span>
+                    <span>· Last audit {formatRelativeTime(biz.latest_audit_finished_at)}</span>
                   {/if}
                 </div>
                 {#if runError[biz.id]}
@@ -381,17 +410,17 @@
                     <span
                       class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-healthy-500"
                     ></span>
-                    Audit in progress · watch
+                    In progress · watch
                   </a>
                 {:else}
                   <button
                     type="button"
-                    class="btn-primary w-full sm:w-auto"
+                    class="btn-ghost w-full sm:w-auto"
                     onclick={() => handleRun(biz)}
                     disabled={disabled}
                     title={atCap ? 'You are at your weekly audit limit' : ''}
                   >
-                    {starting ? 'Starting…' : 'Run manual audit'}
+                    {starting ? 'Starting…' : 'Run audit'}
                   </button>
                 {/if}
               </div>
@@ -399,131 +428,6 @@
           </li>
         {/each}
       </ul>
-    </section>
-
-    <!-- ===== Scheduled audits ===== -->
-    <section class="space-y-3">
-      <div class="flex items-end justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
-          Scheduled audits
-        </h2>
-        {#if isPaid}
-          <span
-            class="inline-flex items-center gap-1.5 rounded-full bg-healthy-100 px-2 py-0.5 text-xs font-medium text-healthy-700"
-          >
-            <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
-            Paid plan
-          </span>
-        {/if}
-      </div>
-
-      {#if isPaid}
-        <div class="card p-6">
-          <div class="flex items-start gap-3">
-            <div
-              class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-healthy-50 text-2xl"
-              aria-hidden="true"
-            >
-              ⏰
-            </div>
-            <div class="min-w-0">
-              <p class="text-sm font-semibold tracking-tight text-canvas-ink">
-                Scheduled audits
-              </p>
-              <p class="mt-1 text-xs leading-relaxed text-canvas-muted">
-                Pick a cadence on each business and we'll re-check it on that rhythm, sharing
-                your weekly audit quota. Set or change a schedule from the business page.
-              </p>
-            </div>
-          </div>
-
-          {#if scheduledBusinesses.length > 0}
-            <ul class="mt-5 space-y-2">
-              {#each scheduledBusinesses as biz (biz.id)}
-                <li
-                  class="flex items-center justify-between gap-3 rounded-xl border border-canvas-soft bg-white px-4 py-3 text-sm"
-                >
-                  <div class="min-w-0">
-                    <a
-                      href={`/businesses/${biz.id}`}
-                      class="truncate font-medium text-canvas-ink hover:text-healthy-700"
-                    >
-                      {biz.name}
-                    </a>
-                    <p class="text-xs text-canvas-muted">
-                      {biz.city}{#if biz.audit_schedule_cadence} · {biz.audit_schedule_cadence}{/if}
-                    </p>
-                  </div>
-                  <p class="shrink-0 text-xs text-canvas-muted">
-                    Next: {formatReset(biz.next_auto_audit_at)}
-                  </p>
-                </li>
-              {/each}
-            </ul>
-          {:else}
-            <p class="mt-5 rounded-xl border border-canvas-soft bg-canvas-soft/40 px-4 py-3 text-xs text-canvas-muted">
-              No businesses are on a schedule yet. Open one from the dashboard and pick a cadence —
-              weekly, bi-weekly, or monthly.
-            </p>
-          {/if}
-        </div>
-      {:else}
-        <!-- Free-tier pitch: identical layout, locked overlay. -->
-        <div
-          class="card relative overflow-hidden border-healthy-200 bg-gradient-to-br from-healthy-50/40 to-white p-6"
-        >
-          <div class="pointer-events-none opacity-50">
-            <div class="flex items-start gap-3">
-              <div
-                class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-healthy-50 text-2xl"
-                aria-hidden="true"
-              >
-                ⏰
-              </div>
-              <div class="min-w-0">
-                <p class="text-sm font-semibold tracking-tight text-canvas-ink">
-                  Scheduled audits
-                </p>
-                <p class="mt-1 text-xs leading-relaxed text-canvas-muted">
-                  Set a weekly, bi-weekly, or monthly cadence on each business and we'll
-                  re-check it for you on that rhythm.
-                </p>
-              </div>
-            </div>
-            <ul class="mt-5 space-y-2">
-              <li
-                class="flex items-center justify-between gap-3 rounded-xl border border-canvas-soft bg-white px-4 py-3 text-sm"
-              >
-                <div>
-                  <p class="font-medium text-canvas-ink">Your business · Calicut</p>
-                  <p class="text-xs text-canvas-muted">Sample preview · weekly</p>
-                </div>
-                <p class="text-xs text-canvas-muted">Next: in 7 days</p>
-              </li>
-            </ul>
-          </div>
-
-          <!-- Lock overlay -->
-          <div
-            class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/40 px-6 text-center backdrop-blur-[2px]"
-          >
-            <div
-              class="grid h-12 w-12 place-items-center rounded-2xl bg-healthy-500 text-white shadow-soft"
-              aria-hidden="true"
-            >
-              🔒
-            </div>
-            <p class="text-sm font-semibold tracking-tight text-canvas-ink">
-              Scheduled audits are a paid feature
-            </p>
-            <p class="max-w-sm text-xs text-canvas-muted">
-              Upgrade and pick a cadence on each business — we'll re-check it on that
-              rhythm and email you only when the score moves.
-            </p>
-            <a class="btn-primary mt-1" href="/billing">Upgrade to unlock</a>
-          </div>
-        </div>
-      {/if}
     </section>
   {/if}
 </section>

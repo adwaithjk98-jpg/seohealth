@@ -17,6 +17,7 @@
   let loading = $state(true);
   let error = $state(/** @type {string | null} */ (null));
   let upgrading = $state(false);
+  let upgradingTier = $state(/** @type {string | null} */ (null));
   let upgradeMessage = $state(/** @type {string | null} */ (null));
 
   onMount(async () => {
@@ -35,21 +36,27 @@
   });
 
   const tier = $derived(subscriptionData?.tier ?? authState.user?.plan ?? 'free');
-  const isPaid = $derived(tier === 'paid');
+  // "Paying" = Pro ('paid') OR Max. Only Free is unsubscribed.
+  const isPaid = $derived(tier !== 'free');
+  const isMax = $derived(tier === 'max');
+  const planLabel = $derived(tier === 'max' ? 'Max' : tier === 'paid' ? 'Pro' : 'Free');
   const limits = $derived(subscriptionData?.limits ?? { businesses: 1, audits_per_week: 1 });
   const businessCount = $derived(subscriptionData?.business_count ?? 0);
   const subscription = $derived(subscriptionData?.subscription ?? null);
 
-  async function handleUpgrade() {
+  /** @param {'paid' | 'max'} planTier */
+  async function handleUpgrade(planTier = 'paid') {
     if (upgrading) return;
     upgrading = true;
+    upgradingTier = planTier;
     upgradeMessage = null;
     error = null;
+    const planName = planTier === 'max' ? 'Max' : 'Pro';
     try {
-      const checkout = await startSubscriptionCheckout('paid');
+      const checkout = await startSubscriptionCheckout(planTier);
       if (checkout.mock) {
         // Mock mode: backend already activated the subscription. Just refresh.
-        upgradeMessage = "You're on the paid plan. Welcome aboard.";
+        upgradeMessage = `You're on the ${planName} plan. Welcome aboard.`;
         await Promise.all([refreshCurrentUser(), reloadState()]);
         return;
       }
@@ -60,7 +67,10 @@
         key: checkout.razorpay_key_id,
         subscription_id: checkout.razorpay_subscription_id,
         name: 'Local SEO Health Monitor',
-        description: 'Paid plan — 3 businesses, weekly health checks',
+        description:
+          planTier === 'max'
+            ? 'Max plan — multi-location monitoring, up to 10 businesses'
+            : 'Pro plan — weekly auto-audits, competitor tracking, Monday digest',
         handler: async () => {
           upgradeMessage = "Payment received. We're confirming with Razorpay…";
           // The actual state flip happens on the webhook; poll once after a
@@ -72,6 +82,7 @@
         modal: {
           ondismiss: () => {
             upgrading = false;
+            upgradingTier = null;
           }
         },
         theme: { color: '#4f8c5b' }
@@ -81,7 +92,10 @@
       error = err instanceof Error ? err.message : 'Could not start the upgrade.';
     } finally {
       // For mock mode we finish here; for live mode `ondismiss` clears it.
-      if (subscriptionData?.tier === 'paid') upgrading = false;
+      if (subscriptionData?.tier !== 'free') {
+        upgrading = false;
+        upgradingTier = null;
+      }
     }
   }
 
@@ -120,7 +134,7 @@
       Your subscription
     </h1>
     <p class="mt-2 text-sm text-canvas-muted">
-      Pick the plan that matches how many businesses you want to keep healthy.
+      Free shows you the score. Paid keeps watching — and tells you the moment it moves.
     </p>
   </header>
 
@@ -155,7 +169,7 @@
         <div>
           <p class="text-xs uppercase tracking-wide text-canvas-muted">Current plan</p>
           <p class="mt-1 text-2xl font-semibold text-canvas-ink">
-            {isPaid ? 'Paid' : 'Free'}
+            {planLabel}
           </p>
           <p class="mt-1 text-sm text-canvas-muted">
             {limits.businesses} {limits.businesses === 1 ? 'business' : 'businesses'} ·
@@ -212,7 +226,7 @@
       {/if}
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-2">
+    <div class="grid gap-4 sm:grid-cols-3">
       <div class="card p-5">
         <p class="text-xs uppercase tracking-wide text-canvas-muted">Free</p>
         <p class="mt-1 text-xl font-semibold text-canvas-ink">₹0 / month</p>
@@ -222,32 +236,67 @@
           <li>Plain-English recommendations</li>
         </ul>
         <p class="mt-4 text-xs text-canvas-muted">
-          {isPaid ? 'Switch from paid in support.' : "You're on this plan."}
+          {tier === 'free' ? "You're on this plan." : 'Included in every plan.'}
         </p>
       </div>
+
       <div class="card border border-healthy-100 bg-healthy-50/40 p-5">
-        <p class="text-xs uppercase tracking-wide text-healthy-700">Paid</p>
-        <p class="mt-1 text-xl font-semibold text-canvas-ink">₹399 / month</p>
+        <p class="text-xs uppercase tracking-wide text-healthy-700">Pro</p>
+        <p class="mt-1 text-xl font-semibold text-canvas-ink">₹549 / month</p>
         <ul class="mt-3 space-y-1.5 text-sm text-canvas-ink">
-          <li>Up to 3 businesses</li>
           <li>Weekly auto-audits</li>
+          <li>Competitor discovery &amp; tracking</li>
+          <li>Monday digest when your score moves</li>
           <li>Step-by-step guided fixes</li>
         </ul>
-        {#if !isPaid}
+        {#if tier === 'free'}
           <button
             type="button"
             class="btn-primary mt-4 w-full"
-            onclick={handleUpgrade}
+            onclick={() => handleUpgrade('paid')}
             disabled={upgrading}
           >
-            {upgrading ? 'Starting checkout…' : 'Upgrade to paid'}
+            {upgrading && upgradingTier === 'paid' ? 'Starting checkout…' : 'Upgrade to Pro'}
           </button>
           <p class="mt-3 text-center text-xs text-canvas-muted">
             Razorpay Test Mode — no real card will be charged.
           </p>
-        {:else}
+        {:else if tier === 'paid'}
           <p class="mt-4 text-center text-xs text-healthy-700 font-medium">
-            You're on the paid plan.
+            You're on the Pro plan.
+          </p>
+        {:else}
+          <p class="mt-4 text-center text-xs text-canvas-muted">
+            Included in your Max plan.
+          </p>
+        {/if}
+      </div>
+
+      <div class="card border border-attention-100 bg-attention-50/40 p-5">
+        <p class="text-xs uppercase tracking-wide text-attention-700">Max</p>
+        <p class="mt-1 text-xl font-semibold text-canvas-ink">₹2,500 / month</p>
+        <ul class="mt-3 space-y-1.5 text-sm text-canvas-ink">
+          <li>Everything in Pro</li>
+          <li>Up to 10 businesses</li>
+          <li>8 competitors tracked</li>
+          <li>4 discovery scans / month</li>
+          <li>Per-business weekly digest</li>
+        </ul>
+        {#if isMax}
+          <p class="mt-4 text-center text-xs text-attention-700 font-medium">
+            You're on the Max plan.
+          </p>
+        {:else}
+          <button
+            type="button"
+            class="btn-primary mt-4 w-full"
+            onclick={() => handleUpgrade('max')}
+            disabled={upgrading}
+          >
+            {upgrading && upgradingTier === 'max' ? 'Starting checkout…' : 'Upgrade to Max'}
+          </button>
+          <p class="mt-3 text-center text-xs text-canvas-muted">
+            For multi-location owners &amp; agencies.
           </p>
         {/if}
       </div>

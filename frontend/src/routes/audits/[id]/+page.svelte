@@ -6,6 +6,7 @@
   import { quintOut } from 'svelte/easing';
   import { defaultPhase, progressCopy } from '$lib/audit-phases.js';
   import { getAudit, startAudit } from '$lib/api.js';
+  import { topOpenRecommendations, severityLabel } from '$lib/dashboard.js';
 
   const auditId = $derived(parseInt($page.params.id, 10));
 
@@ -17,6 +18,14 @@
   let stalled = $state(false);
   let retrying = $state(false);
   let retryError = $state(/** @type {string | null} */ (null));
+  // Audit_started flips this; first-audit vs returning frames the
+  // header copy and the per-phase "compared to last time" UI.
+  let isFirstAudit = $state(false);
+  // Top finding for the first-audit reveal moment. We fetch the audit
+  // detail once on completion to surface the single highest-impact rec
+  // inline ("the most important thing to look at this week") so the
+  // first-audit screen doesn't dead-end at a score.
+  let topFinding = $state(/** @type {any} */ (null));
 
   /** @type {EventSource | null} */
   let source = null;
@@ -55,6 +64,7 @@
   function handleAuditStarted(event) {
     const data = JSON.parse(event.data);
     business = data.business ?? null;
+    isFirstAudit = Boolean(data.is_first_audit);
     phases = (data.sections ?? []).map((s) => ({ ...defaultPhase(s), state: 'pending' }));
     bumpStalledTimer();
   }
@@ -84,17 +94,38 @@
       score: data.score ?? null,
       summary,
       recCount: data.recommendation_count ?? 0,
-      error: data.error ?? null
+      error: data.error ?? null,
+      // Live-diff payload. ``previousScore`` is the same pillar's
+      // score from the prior audit (null on first run);
+      // ``highlight`` is the short newsy headline the backend
+      // computes from raw_data + previous raw_data.
+      previousScore: data.previous_score ?? null,
+      highlight: data.highlight ?? null,
+      optedOut: Boolean(data.opted_out)
     });
     bumpStalledTimer();
   }
 
-  function handleAuditCompleted(event) {
+  async function handleAuditCompleted(event) {
     const data = JSON.parse(event.data);
     overallScore = data.overall_score ?? null;
     isComplete = true;
     clearStalledTimer();
     closeStream();
+    // First-audit users land here knowing nothing about the dashboard
+    // yet — fetch the audit detail to pull the single highest-impact
+    // recommendation so the reveal card has something concrete to act
+    // on instead of just a score. Returning users skip the fetch.
+    if (isFirstAudit) {
+      try {
+        const detail = await getAudit(auditId);
+        const top = topOpenRecommendations(detail.sections ?? [], 1);
+        topFinding = top[0] ?? null;
+      } catch {
+        // Best-effort enrichment — the score + dashboard CTA still
+        // works without it.
+      }
+    }
   }
 
   function handleAuditFailed(event) {
@@ -216,13 +247,25 @@
       {/if}
     </p>
     <h1 class="mt-3 text-2xl font-semibold tracking-tight sm:text-4xl">
-      {#if business}
-        Quietly checking on
+      {#if business && isFirstAudit}
+        Getting to know
+        <span class="text-healthy-600">{business.name}</span>
+      {:else if business}
+        Re-checking
         <span class="text-healthy-600">{business.name}</span>
       {:else}
         Getting your audit ready…
       {/if}
     </h1>
+    {#if business}
+      <p class="mt-1 text-xs text-canvas-muted">
+        {#if isFirstAudit}
+          First time through — we'll walk you through what we found at the end.
+        {:else}
+          Watching for anything that changed since last time.
+        {/if}
+      </p>
+    {/if}
     {#if business?.city}
       <p class="mt-1 text-sm text-canvas-muted">{business.city}</p>
     {/if}
@@ -298,15 +341,32 @@
           {/if}
 
           {#if phase.state === 'done'}
-            <div class="mt-1.5 space-y-0.5 text-sm text-canvas-muted" in:fade={{ duration: 250 }}>
-              {#if phase.summary}
+            <div class="mt-1.5 space-y-1 text-sm text-canvas-muted" in:fade={{ duration: 250 }}>
+              {#if phase.highlight}
+                <!-- Live-diff headline. Reads as news ("8 new
+                     reviews since last check") rather than as a
+                     static summary, which is what makes the 5-minute
+                     wait feel like something is happening. -->
+                <p class="font-medium text-canvas-ink">{phase.highlight}</p>
+              {:else if phase.summary}
                 <p>{phase.summary}</p>
               {/if}
-              {#if phase.score != null}
-                <p class="text-canvas-ink">
-                  Score <span class="font-medium">{phase.score}</span>/100
+              {#if phase.score != null && !phase.optedOut}
+                <p class="flex flex-wrap items-baseline gap-x-2 text-canvas-ink">
+                  <span>
+                    Score <span class="font-medium">{phase.score}</span>/100
+                  </span>
+                  {#if phase.previousScore != null && phase.previousScore !== phase.score}
+                    {@const diff = phase.score - phase.previousScore}
+                    {@const tone = diff > 0 ? 'text-healthy-700 bg-healthy-50' : 'text-action-700 bg-action-50'}
+                    <span class={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>
+                      {diff > 0 ? '↑' : '↓'} {Math.abs(diff)} from {phase.previousScore}
+                    </span>
+                  {:else if phase.previousScore == null}
+                    <span class="text-xs text-canvas-muted">first reading</span>
+                  {/if}
                   {#if scoreLabel(phase.score)}
-                    <span class="text-canvas-muted">— {scoreLabel(phase.score)}</span>
+                    <span class="text-canvas-muted text-xs">— {scoreLabel(phase.score)}</span>
                   {/if}
                 </p>
               {/if}
@@ -316,6 +376,10 @@
                 </p>
               {/if}
             </div>
+          {:else if phase.state === 'failed' && phase.optedOut}
+            <p class="mt-1.5 text-sm text-canvas-muted" in:fade={{ duration: 250 }}>
+              {phase.highlight ?? "Skipped — you opted out of this pillar."}
+            </p>
           {:else if phase.state === 'failed'}
             <p class="mt-1.5 text-sm text-canvas-muted">
               We'll come back to this one — the rest of your audit is still on track.
@@ -363,6 +427,86 @@
           Back to your dashboard
         </a>
       </div>
+    </div>
+  {:else if isComplete && isFirstAudit}
+    <!-- First-audit reveal moment. Returning users skip this; they
+         know the dashboard. New users get a deliberate three-beat
+         orientation — score, what we found, what to fix first — so
+         the 5-minute wait pays off in narrative, not just a number. -->
+    <div
+      class="mt-10 space-y-6"
+      in:fly={{ y: 8, duration: 350, easing: quintOut }}
+    >
+      <div class="card p-6 text-center sm:p-8">
+        <p class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">
+          Your first health check
+        </p>
+        {#if overallScore != null}
+          <p class="mt-2 text-6xl font-semibold tracking-tight text-healthy-600">
+            {overallScore}
+          </p>
+          <p class="mt-1 text-sm text-canvas-ink">{scoreLabel(overallScore)} · out of 100</p>
+        {:else}
+          <p class="mt-2 text-base text-canvas-ink">Your personalised plan is ready.</p>
+        {/if}
+      </div>
+
+      <div class="card p-5 sm:p-6">
+        <p class="text-sm font-semibold text-canvas-ink">What we looked at</p>
+        <p class="mt-1 text-xs text-canvas-muted">
+          Four pillars that decide how easy you are to find online. Tap any one on the
+          dashboard to dig into the details.
+        </p>
+        <ul class="mt-3 space-y-1.5 text-sm">
+          {#each phases as phase (phase.section)}
+            <li class="flex items-center justify-between gap-3">
+              <span class="flex items-center gap-2 text-canvas-ink">
+                <span aria-hidden="true">{phase.emoji}</span>
+                {phase.label}
+              </span>
+              <span class="text-canvas-muted">
+                {#if phase.optedOut}
+                  Skipped
+                {:else if phase.score != null}
+                  {phase.score}/100
+                {:else}
+                  —
+                {/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+
+      {#if topFinding}
+        <div class="card border border-attention-100 bg-attention-50/60 p-5 sm:p-6">
+          <p class="text-xs font-semibold uppercase tracking-wide text-attention-700">
+            The single biggest fix this week
+          </p>
+          <p class="mt-2 text-sm font-semibold text-canvas-ink">{topFinding.title}</p>
+          <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-canvas-muted">
+            <span>{severityLabel(topFinding.severity)}</span>
+            <span>·</span>
+            <span>{topFinding.sectionEmoji} {topFinding.sectionLabel}</span>
+            {#if topFinding.estimated_time}
+              <span>·</span>
+              <span>{topFinding.estimated_time}</span>
+            {/if}
+          </div>
+          <p class="mt-3 text-xs text-canvas-muted">
+            Don't worry — your dashboard has the step-by-step fix, plus two more small
+            things to look at when you have a moment.
+          </p>
+        </div>
+      {/if}
+
+      <button
+        type="button"
+        class="btn-primary w-full"
+        onclick={viewDashboard}
+      >
+        Take me to my dashboard →
+      </button>
     </div>
   {:else if isComplete}
     <div

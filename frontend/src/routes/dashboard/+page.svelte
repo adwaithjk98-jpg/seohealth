@@ -15,6 +15,17 @@
   const errorMessage = $derived(
     data?.error && data.error !== 'unauthenticated' ? data.error : null
   );
+  // Total open recommendations across every business — drives the
+  // "View all insights" pull-card copy. Comes from the businesses
+  // listing payload so we don't fan out an extra fetch on every
+  // dashboard render.
+  const totalOpenInsights = $derived(
+    businesses.reduce(
+      (/** @type {number} */ acc, /** @type {any} */ b) =>
+        acc + (b.open_recommendations_count ?? 0),
+      0
+    )
+  );
 
   // Gate the "Add another business" CTA on the user's tier limits. The
   // server enforces this (402 from POST /api/businesses) — the UI just
@@ -28,7 +39,7 @@
   // the user has clearly more than N.
   const overBusinessLimit = $derived(businesses.length > businessLimit);
   const tier = $derived(subState?.tier ?? authState.user?.plan ?? 'free');
-  const isPaid = $derived(tier === 'paid');
+  const isPaid = $derived(tier !== 'free');
 
   /**
    * Format a backend-provided naive-UTC ISO timestamp into a short, friendly
@@ -132,6 +143,74 @@
       <a class="btn-primary w-full sm:w-auto" href="/">Add a business</a>
     </div>
   {:else}
+    <a
+      href="/dashboard/insights"
+      data-sveltekit-preload-data="tap"
+      class="group relative flex flex-col gap-5 overflow-hidden rounded-2xl border border-healthy-100 bg-gradient-to-br from-healthy-50 via-attention-50/40 to-white p-6 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-healthy-200 hover:shadow-md sm:p-8"
+    >
+      <div class="flex items-start justify-between gap-3">
+        <p
+          class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-healthy-700"
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+          Your insights
+        </p>
+        <span class="relative grid h-12 w-12 shrink-0 place-items-center" aria-hidden="true">
+          <span class="absolute inset-0 animate-pulse rounded-full bg-healthy-200/40"></span>
+          <span
+            class="relative grid h-10 w-10 place-items-center rounded-full bg-white text-healthy-700 shadow-sm transition-transform duration-300 group-hover:scale-110"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="h-5 w-5"
+            >
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+              <circle cx="12" cy="12" r="3.2" />
+            </svg>
+          </span>
+        </span>
+      </div>
+
+      {#if totalOpenInsights === 0}
+        <div class="space-y-1">
+          <p class="text-3xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
+            All caught up
+          </p>
+          <p class="text-sm text-canvas-muted">
+            Tap to peek — we'll let you know the moment something new lands.
+          </p>
+        </div>
+      {:else}
+        <div class="space-y-1">
+          <p class="flex items-baseline gap-2 text-canvas-ink">
+            <span class="text-5xl font-semibold tracking-tight text-healthy-700 sm:text-6xl">
+              {totalOpenInsights}
+            </span>
+            <span class="text-base font-medium sm:text-lg">
+              {totalOpenInsights === 1 ? 'thing' : 'things'} worth a look
+            </span>
+          </p>
+          <p class="text-sm text-canvas-muted">
+            Across your {businesses.length}
+            {businesses.length === 1 ? 'business' : 'businesses'} · tap to dive in
+          </p>
+        </div>
+      {/if}
+
+      <span
+        class="self-end text-sm font-medium text-healthy-700 transition-transform duration-200 group-hover:translate-x-1"
+        aria-hidden="true"
+      >
+        View insights →
+      </span>
+    </a>
+
     <div class="grid gap-4 sm:grid-cols-2">
       {#each businesses as biz, i (biz.id)}
         {@const tone = scoreTone(biz.latest_score)}
@@ -208,9 +287,10 @@
           class="card flex w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
         >
           <p class="text-sm text-canvas-ink">
-            You've used your 1 free business slot. Upgrade to track up to 3.
+            Paid keeps watching this business every week — auto-audits, competitor tracking, and a
+            Monday digest the moment your score moves.
           </p>
-          <a class="btn-primary w-full sm:w-auto" href="/billing">Upgrade to paid</a>
+          <a class="btn-primary w-full sm:w-auto" href="/billing">See paid plan</a>
         </div>
       {:else if overBusinessLimit}
         <p class="text-xs text-canvas-muted">
@@ -218,9 +298,14 @@
           We'll keep everything visible — archive one to add a new business going forward.
         </p>
       {:else}
-        <p class="text-xs text-canvas-muted">
-          You've hit the {businessLimit}-business limit on your plan.
-        </p>
+        <div
+          class="card flex w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p class="text-sm text-canvas-ink">
+            Pro covers one business. Max tracks up to 10 — built for multi-location owners and agencies.
+          </p>
+          <a class="btn-primary w-full sm:w-auto" href="/billing">See Max</a>
+        </div>
       {/if}
     </div>
   {/if}

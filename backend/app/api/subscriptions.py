@@ -77,13 +77,13 @@ def start_checkout(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> CheckoutResponse:
-    if payload.plan_tier != "paid":
+    if payload.plan_tier not in subs_service.PLAN_TIER_TO_USER_PLAN:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="only the 'paid' plan tier is sold today",
+            detail=f"unknown plan tier: {payload.plan_tier!r}",
         )
     try:
-        result = subs_service.create_checkout(db, user)
+        result = subs_service.create_checkout(db, user, payload.plan_tier)
     except RuntimeError as exc:
         # Configuration error (e.g. plan id missing) — surface a clean 500
         # so the operator can fix it rather than silently mocking.

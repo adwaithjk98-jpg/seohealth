@@ -46,5 +46,12 @@ class Recommendation(Base):
     # section drill-down don't suggest fixes on channels the business
     # explicitly said it doesn't use.
     fix_target: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Stable key (e.g. ``website.has_meta_description``) that the
+    # fix-loop verifier looks up to decide whether the next audit's
+    # raw_data shows this finding as resolved. NULL = "we can't
+    # auto-verify this one" — the user marks it done/dismissed manually
+    # and it never gets a Confirmed-fix nudge. See
+    # ``services/fix_verifier.py`` for the signal → predicate map.
+    verify_signal: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     audit: Mapped["Audit"] = relationship(back_populates="recommendations")

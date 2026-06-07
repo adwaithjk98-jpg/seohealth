@@ -385,3 +385,102 @@ def send_score_change_email(
             "Resend failed to deliver score-change email to %s", to_email
         )
         raise EmailDeliveryError(str(exc)) from exc
+
+
+# --- Weekly digest -----------------------------------------------------------
+
+
+def _render_weekly_digest_text(payload: dict) -> str:
+    """Plain-text digest body. Kept narrow on purpose — a digest opened
+    on a phone in 5 seconds should read as glance-able news, not a
+    marketing newsletter. HTML can come later; the text version is the
+    contract."""
+    greeting_name = payload.get("greeting_name") or "there"
+    businesses = payload.get("businesses") or []
+    lines = [
+        f"{_PRODUCT_NAME}",
+        "=" * len(_PRODUCT_NAME),
+        "",
+        f"Hi {greeting_name},",
+        "",
+        "Here's how your business looked online this week.",
+        "",
+    ]
+    for biz in businesses:
+        name = biz.get("name") or "Your business"
+        score = biz.get("score")
+        delta = biz.get("delta")
+        confirmed = biz.get("confirmed_count") or 0
+        new_count = biz.get("new_count") or 0
+        top = biz.get("top_finding")
+
+        lines.append(f"• {name}")
+        if score is not None:
+            if delta is None:
+                lines.append(f"    Score: {score}/100 (first audit)")
+            elif delta > 0:
+                lines.append(f"    Score: {score}/100  ↑ +{delta}")
+            elif delta < 0:
+                lines.append(f"    Score: {score}/100  ↓ {delta}")
+            else:
+                lines.append(f"    Score: {score}/100  (no change)")
+        if confirmed:
+            lines.append(f"    ✓ {confirmed} fix{'es' if confirmed != 1 else ''} confirmed since last check")
+        if new_count:
+            lines.append(f"    ⊕ {new_count} new thing{'s' if new_count != 1 else ''} to look at")
+        if top:
+            lines.append(f"    Top: {top}")
+        lines.append("")
+
+    dashboard_url = payload.get("dashboard_url") or ""
+    if dashboard_url:
+        lines.append("Open your dashboard:")
+        lines.append(f"  {dashboard_url}")
+        lines.append("")
+    lines.append("You're getting this because weekly digests are on for your paid plan.")
+    # NOTE: don't add a STOP / unsubscribe line until the launch-
+    # checklist item ("Digest opt-out plumbing") actually ships — until
+    # then a working unsubscribe is a promise we can't keep.
+    lines.append("")
+    lines.append("—")
+    lines.append(_PRODUCT_TAGLINE)
+    return "\n".join(lines)
+
+
+def send_weekly_digest_email(to_email: str, payload: dict) -> None:
+    """Send (or in dev, print) the user's weekly digest.
+
+    ``payload`` shape comes from ``weekly_digest.build_user_digest``:
+    ``{greeting_name, businesses: [{name, score, delta, confirmed_count,
+    new_count, top_finding}], dashboard_url}``.
+
+    Like the score-change sender, this swallows Resend failures up the
+    call stack — a failed digest is annoying but not load-bearing for
+    the user's own actions in the app.
+    """
+    subject = "Your weekly health check digest"
+
+    if not settings.resend_api_key:
+        # Dev fallback — print to the same log the magic-link sender
+        # uses so the local 4-process workflow stays predictable.
+        print(
+            f"\n[weekly-digest] {to_email}:\n"
+            f"{_render_weekly_digest_text(payload)}\n",
+            flush=True,
+        )
+        return
+
+    resend.api_key = settings.resend_api_key
+    params = {
+        "from": settings.from_email,
+        "to": [to_email],
+        "subject": subject,
+        "text": _render_weekly_digest_text(payload),
+    }
+    try:
+        resend.Emails.send(params)
+    except Exception as exc:
+        logger.exception(
+            "Resend failed to deliver weekly digest to %s", to_email
+        )
+        raise EmailDeliveryError(str(exc)) from exc

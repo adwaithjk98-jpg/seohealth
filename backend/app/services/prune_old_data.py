@@ -8,12 +8,19 @@ Finds every audit whose ``finished_at`` is older than ``PRUNE_OLDER_THAN_DAYS``
 * ``audit_sections.raw_data_json`` — per-scraper JSON dump (Maps, Website,
   Instagram, NAP). This is by far the biggest payload — Maps alone carries
   the full place panel summary. We set it to ``NULL``.
+* ``recommendations.body_markdown`` — the "why it matters / how to fix it"
+  markdown body. Hundreds of bytes per row, ~10 rows per audit. After the
+  retention window the user is past acting on the finding; only the title
+  + severity are needed for the historical recommendation list. We set the
+  body to ``NULL`` and lazy-fall-back to a short stub on the section
+  detail page if someone digs into an old audit.
 
-The lightweight rows (``audits``, ``audit_sections.score/status``,
-``recommendations``, ``competitor_observations``) are left untouched so the
-historical trend charts, recommendation history, and competitor overlays
-keep rendering correctly. Only the bulk JSON payloads — which the UI never
-re-reads after the audit is complete — get cleared.
+The lightweight rows + columns (``audits``, ``audit_sections.score/status``,
+``recommendations.title/severity/fix_status``, ``competitor_observations``)
+are left untouched so the historical trend charts, the sparkline on each
+dashboard card, the recommendation history, and competitor overlays keep
+rendering correctly. Only the bulky payloads — which the UI never re-reads
+in steady state after the audit window closes — get cleared.
 
 Trigger surface
 ---------------
@@ -26,7 +33,7 @@ Trigger surface
 
 Both surfaces ultimately call ``prune_old_audit_data`` below, which is
 idempotent — re-running it never re-clears already-NULL rows because the
-WHERE clause filters those out.
+WHERE clauses filter those out.
 """
 from __future__ import annotations
 
@@ -38,7 +45,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session as DbSession
 
 from app.db import SessionLocal
-from app.models import Audit, AuditSection
+from app.models import Audit, AuditSection, Recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -71,29 +78,55 @@ def prune_old_audit_data(db: DbSession | None = None) -> dict[str, int | str]:
         db = SessionLocal()
     cutoff = _cutoff()
     try:
-        # One UPDATE … FROM audits — sets raw_data_json to NULL on every
-        # section row whose parent audit has been "done" for longer than the
-        # retention window. ``is_not(None)`` skips rows we've already pruned
-        # so re-runs do zero work.
-        stmt = (
+        # Subquery — every audit older than the retention window. Used by
+        # both UPDATEs below so the cutoff is computed once and both
+        # tables get pruned against the same set of audits.
+        old_audit_ids = db.query(Audit.id).filter(
+            Audit.finished_at.is_not(None),
+            Audit.finished_at < cutoff,
+        )
+
+        # 1) NULL raw_data_json on AuditSection rows. ``is_not(None)``
+        # skips already-pruned rows so re-runs are free.
+        section_stmt = (
             update(AuditSection)
             .where(
-                AuditSection.audit_id.in_(
-                    db.query(Audit.id).filter(
-                        Audit.finished_at.is_not(None),
-                        Audit.finished_at < cutoff,
-                    )
-                ),
+                AuditSection.audit_id.in_(old_audit_ids),
                 AuditSection.raw_data_json.is_not(None),
             )
             .values(raw_data_json=None)
             .execution_options(synchronize_session=False)
         )
-        result = db.execute(stmt)
+        section_result = db.execute(section_stmt)
+
+        # 2) NULL body_markdown on Recommendation rows. We keep title +
+        # severity + fix_status so historical "you marked this done" /
+        # "this re-appeared" surfaces still work; the multi-paragraph
+        # body is the only big column. Sentinel string makes section-
+        # detail rendering predictable when someone digs into an old
+        # audit ("(Details no longer kept — re-run to refresh.)").
+        rec_stmt = (
+            update(Recommendation)
+            .where(
+                Recommendation.audit_id.in_(old_audit_ids),
+                Recommendation.body_markdown.is_not(None),
+                Recommendation.body_markdown != "",
+                Recommendation.body_markdown.notlike("(Details no longer kept%"),
+            )
+            .values(body_markdown="(Details no longer kept after the retention window — re-run the audit to refresh.)")
+            .execution_options(synchronize_session=False)
+        )
+        rec_result = db.execute(rec_stmt)
+
         db.commit()
-        rows_pruned = int(result.rowcount or 0)
+        section_rows = int(section_result.rowcount or 0)
+        rec_rows = int(rec_result.rowcount or 0)
         summary: dict[str, int | str] = {
-            "rows_pruned": rows_pruned,
+            "section_rows_pruned": section_rows,
+            "recommendation_rows_pruned": rec_rows,
+            # Kept for backwards compat with anything that read the old
+            # ``rows_pruned`` key (e.g. log-greps in `/tmp/audit_*.log`).
+            "rows_pruned": section_rows + rec_rows,
             "cutoff": cutoff.isoformat(),
             "retention_days": PRUNE_OLDER_THAN_DAYS,
         }

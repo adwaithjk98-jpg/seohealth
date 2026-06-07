@@ -30,6 +30,7 @@ from app.services.email_service import (
 )
 from app.services.pillar_optout import enabled_pillars
 from app.services.prune_old_data import prune_old_audit_data
+from app.services.section_highlight import section_highlight
 from scrapers import (
     audit_instagram,
     audit_maps,
@@ -117,6 +118,38 @@ def _apply_discovered_fields(
         db.commit()
         db.refresh(business)
     return changed
+
+
+def _previous_section_snapshots(
+    db: Session, business_id: int, current_audit_id: int
+) -> dict[str, dict]:
+    """Per-section scoreboard for the most recent prior completed audit.
+
+    Returns ``{section_name: {"score": int|None, "raw": dict|None}}`` so
+    the live-feed renderer can compare each pillar against last time
+    ("Reviews up 8 since last check"). Empty dict when this is the first
+    audit for the business — the frontend treats absent prev-data as
+    "first-time orientation" framing.
+    """
+    prev = (
+        db.query(Audit)
+        .filter(
+            Audit.business_id == business_id,
+            Audit.id != current_audit_id,
+            Audit.status == AuditStatus.done,
+        )
+        .order_by(desc(Audit.finished_at), desc(Audit.id))
+        .first()
+    )
+    if prev is None:
+        return {}
+    out: dict[str, dict] = {}
+    for sec in prev.sections:
+        out[sec.section.value] = {
+            "score": sec.score,
+            "raw": sec.raw_data_json or None,
+        }
+    return out
 
 
 def _previous_overall_score(
@@ -222,6 +255,11 @@ def _persist_section(
                 # target so cross-pillar findings can be filtered by
                 # opt-out at read time.
                 fix_target=rec.fix_target or section.value,
+                # Stable key for the fix-loop verifier. NULL when the
+                # scraper didn't tag this rec (NAP cross-source recs,
+                # anything ambiguous) — those stay outside the auto-
+                # verification flow.
+                verify_signal=rec.verify_signal,
                 fix_status=(
                     RecommendationFixStatus.done
                     if already_done
@@ -253,12 +291,20 @@ async def run_audit(audit_id: int) -> None:
 
         audit.status = AuditStatus.running
         db.commit()
+        # Snapshot of the previous audit's per-section scores + raw_data.
+        # Used to enrich each ``section_completed`` event with a "+8
+        # reviews since last check" headline, and to flip the
+        # audit_started copy between first-audit ("getting to know
+        # you") and returning-user ("re-checking ...") modes.
+        prev_snapshots = _previous_section_snapshots(db, business.id, audit_id)
+        is_first_audit = len(prev_snapshots) == 0
         await stream.publish(
             {
                 "type": "audit_started",
                 "audit_id": audit_id,
                 "business": {"id": business.id, "name": business.name, "city": business.city},
                 "sections": [s.value for s, _ in PIPELINE],
+                "is_first_audit": is_first_audit,
             }
         )
 
@@ -334,6 +380,11 @@ async def run_audit(audit_id: int) -> None:
                         "section": section.value,
                         "status": "failed",
                         "opted_out": True,
+                        # Skipped-by-design pillars get a distinct
+                        # headline so the live feed shows why they're
+                        # absent ("Skipped — you said you don't use a
+                        # website") instead of looking broken.
+                        "highlight": "Skipped — you opted out of this pillar",
                     }
                 )
                 # Don't feed into prior_raw — NAP must see it as absent.
@@ -406,6 +457,7 @@ async def run_audit(audit_id: int) -> None:
             # per-section "Skipped" cards already prompt the user to
             # fix the underlying data.
             section_scores.append(result.score)
+            prev_snap = prev_snapshots.get(section.value, {})
             await stream.publish(
                 {
                     "type": "section_completed",
@@ -414,6 +466,17 @@ async def run_audit(audit_id: int) -> None:
                     "score": result.score,
                     "recommendation_count": len(result.recommendations),
                     "summary": result.raw_data,
+                    # Live-diff payload. ``previous_score`` enables the
+                    # "was 65, +5" delta chip; ``highlight`` is a short
+                    # newsy headline ("8 new reviews since last check")
+                    # computed by section_highlight from this run's
+                    # raw_data and the previous audit's raw_data.
+                    "previous_score": prev_snap.get("score"),
+                    "highlight": section_highlight(
+                        section.value,
+                        result.raw_data,
+                        prev_snap.get("raw"),
+                    ),
                 }
             )
 
