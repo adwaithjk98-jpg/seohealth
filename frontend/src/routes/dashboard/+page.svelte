@@ -7,6 +7,8 @@
   import { authState, loadCurrentUser, greetingName } from '$lib/auth.svelte.js';
   import { trendArrow, trendTone, scoreTone, formatRelativeTime } from '$lib/dashboard.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
+  import UpgradeCallout from '$lib/components/UpgradeCallout.svelte';
+  import { MAX } from '$lib/tiers.js';
 
   /** @type {{ data: { businesses: any[] | null, error: string | null } }} */
   let { data } = $props();
@@ -298,14 +300,14 @@
           We'll keep everything visible — archive one to add a new business going forward.
         </p>
       {:else}
-        <div
-          class="card flex w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <p class="text-sm text-canvas-ink">
-            Pro covers one business. Max tracks up to 10 — built for multi-location owners and agencies.
-          </p>
-          <a class="btn-primary w-full sm:w-auto" href="/billing">See Max</a>
-        </div>
+        <!-- Pro user at the 1-business cap. Rare edge case, kept low-key: the
+             Max tone is muted + ghost, deliberately quieter than Pro nudges. -->
+        <UpgradeCallout
+          tone="max"
+          title="Managing more than one place?"
+          body={`Pro covers one business. Max tracks up to ${MAX.businesses}, for multi-location owners and agencies.`}
+          cta="See Max"
+        />
       {/if}
     </div>
   {/if}

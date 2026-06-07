@@ -21,6 +21,13 @@
   let nameSaving = $state(false);
   let nameError = $state(/** @type {string | null} */ (null));
 
+  // The single persistent upgrade affordance lives in the account area and is
+  // free-only. Never a banner, never animated — just always quietly there.
+  const tier = $derived(
+    authState.user?.subscription_state?.tier ?? authState.user?.plan ?? 'free'
+  );
+  const isFree = $derived(tier === 'free');
+
   $effect(() => {
     // Seed the input whenever the menu opens or the signed-in user changes.
     if (mobileMenuOpen) {
@@ -138,6 +145,15 @@
               <path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5" />
             </svg>
           </a>
+          {#if isFree}
+            <!-- Quiet, persistent Free -> Pro entry. Static; no animation. -->
+            <a
+              class="hidden items-center rounded-full border border-healthy-200 bg-healthy-50 px-3 py-1 text-xs font-medium text-healthy-700 transition-colors hover:bg-healthy-100 sm:inline-flex"
+              href="/billing"
+            >
+              Upgrade to Pro
+            </a>
+          {/if}
           <a class="btn-ghost hidden sm:inline-flex" href="/billing">Billing</a>
           <span class="hidden text-xs text-canvas-muted sm:inline" title={authState.user.email}>
             {greetingName(authState.user)}
@@ -212,6 +228,15 @@
                 <p class="mt-2 truncate px-2 text-xs text-canvas-muted">
                   Signed in as {authState.user.email}
                 </p>
+                {#if isFree}
+                  <a
+                    href="/billing"
+                    class="btn-ghost mt-2 w-full justify-start font-medium text-healthy-700"
+                    role="menuitem"
+                  >
+                    Upgrade to Pro
+                  </a>
+                {/if}
                 <a
                   href="/billing"
                   class="btn-ghost mt-2 w-full justify-start"

@@ -4,6 +4,8 @@
   import { quintOut } from 'svelte/easing';
   import { goto } from '$app/navigation';
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
+  import { MAX } from '$lib/tiers.js';
+  import InfoHint from '$lib/components/InfoHint.svelte';
 
   let mode = $state(/** @type {'name' | 'url'} */ ('name'));
   let businessName = $state('');
@@ -91,9 +93,11 @@
       hasInstagram !== null &&
       (mode === 'name'
         ? businessName.trim().length > 0 && city.trim().length > 0
-        : mapsUrl.trim().length > 0) &&
-      (!hasWebsite || website.trim().length > 0) &&
-      (!hasInstagram || igHandle.trim().length > 0)
+        : mapsUrl.trim().length > 0)
+    // Website / Instagram URLs are intentionally optional even when the user
+    // says "yes": leaving them blank lets the audit auto-discover them (website
+    // from the Maps listing, Instagram from the website). Manual entry is just
+    // faster + more reliable, so we encourage it without requiring it.
   );
 
   async function handleSubmit(event) {
@@ -253,8 +257,9 @@
         {#if overBusinessLimit}
           You're tracking {businessCount} businesses but your plan covers {businessLimit}. We'll keep everything visible — archive one to add a new business going forward.
         {:else}
+          Managing more than one place?
           {tier === 'free' ? 'Free and Pro each track one business.' : 'Pro tracks one business.'}
-          To run multiple locations, Max covers up to 10 — with the full monitoring loop on every one.
+          Max covers up to {MAX.businesses} — with the full monitoring loop on every one.
         {/if}
       </p>
       <div class="mt-5 flex flex-wrap gap-3">
@@ -379,7 +384,14 @@
              the Website pillar; "no" hides it from the scoring grid +
              filters Top-3 recs whose fix would land there. -->
         <div class="space-y-2" role="radiogroup" aria-labelledby="has-website-heading">
-          <p id="has-website-heading" class="label">Do you have a website?</p>
+          <div class="flex items-center gap-1.5">
+            <p id="has-website-heading" class="label">Do you have a website?</p>
+            <InfoHint label="How we find your website">
+              If you leave the address blank, we read it off your <strong>Google Maps</strong>
+              listing during the audit. If your listing doesn't link a website, we can't find it —
+              so typing it here is the reliable way.
+            </InfoHint>
+          </div>
           <div class="grid grid-cols-2 gap-2">
             {#each [{ v: true, label: 'Yes' }, { v: false, label: 'Not yet' }] as opt}
               {@const selected = hasWebsite === opt.v}
@@ -404,13 +416,13 @@
                 id="website"
                 type="url"
                 class="field"
-                placeholder="https://yourbusiness.com"
+                placeholder="https://yourbusiness.com  (optional)"
                 autocomplete="url"
                 bind:value={website}
               />
               <p class="mt-1 text-xs text-canvas-muted">
-                We'll fetch your homepage and check the basics — HTTPS, meta description,
-                Instagram link, contact info.
+                Optional — leave it blank and we'll pull it from your Google Maps listing during the
+                audit. Entering it is faster and more reliable.
               </p>
             </div>
           {:else if hasWebsite === false}
@@ -426,7 +438,14 @@
              a no-IG business shouldn't be scored on a pillar it doesn't
              use. -->
         <div class="space-y-2" role="radiogroup" aria-labelledby="has-instagram-heading">
-          <p id="has-instagram-heading" class="label">Are you on Instagram?</p>
+          <div class="flex items-center gap-1.5">
+            <p id="has-instagram-heading" class="label">Are you on Instagram?</p>
+            <InfoHint label="How we find your Instagram">
+              If you leave the handle blank, we look for it linked on your <strong>website</strong>
+              during the audit. No website, or no link there, means we can't find it — so entering
+              your handle is the reliable way.
+            </InfoHint>
+          </div>
           <div class="grid grid-cols-2 gap-2">
             {#each [{ v: true, label: 'Yes' }, { v: false, label: 'Not on Instagram' }] as opt}
               {@const selected = hasInstagram === opt.v}
@@ -451,14 +470,15 @@
                 id="ig-handle"
                 type="text"
                 class="field"
-                placeholder="@yourbusiness"
+                placeholder="@yourbusiness  (optional)"
                 autocapitalize="none"
                 autocorrect="off"
                 spellcheck="false"
                 bind:value={igHandle}
               />
               <p class="mt-1 text-xs text-canvas-muted">
-                We'll check your profile + look for it linked from your website.
+                Optional — leave it blank and we'll look for it on your website during the audit.
+                Entering it is faster and more reliable.
               </p>
             </div>
           {:else if hasInstagram === false}

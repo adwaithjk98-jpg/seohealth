@@ -28,10 +28,26 @@ BACKEND_DIR="$REPO_DIR/backend"
 FRONTEND_DIR="$REPO_DIR/frontend"
 BOOT_LOG="/tmp/start-dev.log"
 
-QUIET=0
-if [[ "${1:-}" == "--quiet" ]]; then
-  QUIET=1
+# Force the Python procs to native arm64. If start-dev.sh is launched from a
+# Terminal running under Rosetta, the venv's universal python otherwise loads as
+# x86_64 and can't import the arm64-only wheels (pydantic_core) — an
+# "incompatible architecture" crash that silently kills the RQ workers.
+#
+# NB: detect the HARDWARE, not the process arch. Under Rosetta `uname -m` lies
+# and reports x86_64; `hw.optional.arm64` is 1 on Apple Silicon regardless.
+ARCH_PREFIX=""
+if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == "1" ]]; then
+  ARCH_PREFIX="arch -arm64"
 fi
+
+QUIET=0
+NO_WATCH=0
+for arg in "$@"; do
+  case "$arg" in
+    --quiet)    QUIET=1 ;;
+    --no-watch) NO_WATCH=1 ;;  # set by the watchdog so it doesn't recurse
+  esac
+done
 
 log() {
   local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -68,7 +84,7 @@ sleep 2
 (
   cd "$BACKEND_DIR"
   source .venv/bin/activate
-  nohup uvicorn app.main:app --port 8000 --host 127.0.0.1 --reload \
+  nohup $ARCH_PREFIX python -m uvicorn app.main:app --port 8000 --host 127.0.0.1 --reload \
     > /tmp/audit_backend.log 2>&1 &
 )
 log "started uvicorn on :8000"
@@ -77,7 +93,7 @@ log "started uvicorn on :8000"
 (
   cd "$BACKEND_DIR"
   source .venv/bin/activate
-  nohup python -m scripts.run_worker > /tmp/audit_worker.log 2>&1 &
+  nohup $ARCH_PREFIX python -m scripts.run_worker > /tmp/audit_worker.log 2>&1 &
 )
 log "started audit worker"
 
@@ -85,7 +101,7 @@ log "started audit worker"
 (
   cd "$BACKEND_DIR"
   source .venv/bin/activate
-  nohup python -m scripts.run_competitor_worker > /tmp/competitor_worker.log 2>&1 &
+  nohup $ARCH_PREFIX python -m scripts.run_competitor_worker > /tmp/competitor_worker.log 2>&1 &
 )
 log "started competitor worker"
 
@@ -122,5 +138,17 @@ if [[ $ok -eq 1 ]]; then
   log "==== all four processes up — PWA should be live ===="
 else
   log "==== some processes failed — see warnings above ===="
-  exit 1
 fi
+
+# --- (re)spawn the singleton self-heal watchdog ---------------------------
+# Skipped when WE were invoked BY the watchdog (--no-watch), so it never
+# recursively spawns itself. The watchdog keeps the stack alive across
+# sleep/wake + crashes; start-dev's own pkills don't match it.
+if [[ $NO_WATCH -eq 0 ]]; then
+  pkill -f "start-dev-guard.sh" >/dev/null 2>&1 || true
+  sleep 1
+  nohup "$REPO_DIR/start-dev-guard.sh" >/dev/null 2>&1 &
+  log "spawned self-heal watchdog (pid $!)"
+fi
+
+[[ $ok -eq 1 ]] || exit 1

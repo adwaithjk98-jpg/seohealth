@@ -8,6 +8,16 @@
   import { getCompetitorInsights } from '$lib/api.js';
   import { formatRelativeTime } from '$lib/dashboard.js';
   import ManualAddCompetitorModal from '$lib/components/ManualAddCompetitorModal.svelte';
+  import { PRO, MAX } from '$lib/tiers.js';
+
+  // Sample rows for the free-tier locked preview — illustrative only, never
+  // shown sharp. They let a free user SEE the competitor experience (blurred)
+  // instead of hiding it behind a text wall.
+  const samplePreview = [
+    { initial: 'B', name: 'Brew & Co.', rating: '4.6', reviews: '1,204', note: 'up 38 reviews this month', delta: '▲', deltaClass: 'text-healthy-700' },
+    { initial: 'C', name: 'Corner Roasters', rating: '4.4', reviews: '876', note: 'holding steady', delta: '—', deltaClass: 'text-canvas-muted' },
+    { initial: 'L', name: 'Latte Lane', rating: '4.7', reviews: '2,011', note: 'pulling ahead of you', delta: '▲', deltaClass: 'text-attention-700' }
+  ];
 
   /** @type {{ data: { businesses: any[] | null, competitors: any[], error: string | null } }} */
   let { data } = $props();
@@ -210,37 +220,51 @@
   {:else if !isPaid}
     <header in:fade={{ duration: 240 }}>
       <span
-        class="inline-flex items-center gap-2 rounded-full border border-attention-200 bg-attention-50 px-3 py-1 text-xs font-medium text-attention-700"
+        class="inline-flex items-center gap-2 rounded-full border border-healthy-200 bg-healthy-50 px-3 py-1 text-xs font-medium text-healthy-700"
       >
-        <span class="h-1.5 w-1.5 rounded-full bg-attention-500"></span>
+        <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
         Competitor Intelligence
       </span>
       <h1 class="mt-4 text-2xl font-semibold tracking-tight text-canvas-ink sm:text-3xl">
         See how you stack up against the local market
       </h1>
       <p class="mt-2 max-w-2xl text-sm leading-relaxed text-canvas-muted">
-        Track up to 3 nearby businesses per location and watch the gap close — or widen — over
-        time.
+        We track nearby businesses next to yours — rating and review growth over time — so you can
+        see the gap close or widen. Up to {PRO.competitors} competitors on Pro.
       </p>
     </header>
-    <div
-      class="card flex flex-col gap-4 border-attention-100 bg-gradient-to-br from-attention-50 to-white p-6 sm:flex-row sm:items-center sm:justify-between sm:p-7"
-    >
-      <div class="flex items-start gap-4">
-        <div
-          class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-attention-100 text-2xl"
-          aria-hidden="true"
-        >
-          ✨
-        </div>
-        <div class="text-sm">
-          <p class="font-semibold text-canvas-ink">Competitor tracking is a paid feature</p>
-          <p class="mt-1 text-canvas-muted">
-            Upgrade to unlock discovery and 1-on-1 deep dives against the local market.
-          </p>
-        </div>
+
+    <!-- Locked-value preview: show the real experience (blurred), not a text
+         wall. One quiet tap-through to upgrade; nothing fires on its own. -->
+    <div class="relative overflow-hidden rounded-2xl" in:fade={{ duration: 240 }}>
+      <div class="space-y-3 select-none blur-[3px]" aria-hidden="true">
+        {#each samplePreview as s}
+          <div class="card flex items-center gap-4 p-5">
+            <div
+              class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-canvas-soft text-base font-semibold uppercase text-canvas-ink"
+            >
+              {s.initial}
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-canvas-ink">{s.name}</p>
+              <p class="text-xs text-canvas-muted">{s.rating} ★ ({s.reviews} reviews) · {s.note}</p>
+            </div>
+            <span class={`shrink-0 text-sm font-medium ${s.deltaClass}`}>{s.delta}</span>
+          </div>
+        {/each}
       </div>
-      <a class="btn-primary w-full shrink-0 sm:w-auto" href="/billing">Upgrade to paid</a>
+
+      <div
+        class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-t from-canvas via-canvas/85 to-canvas/30 px-4 text-center"
+      >
+        <div class="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm">
+          🔓
+        </div>
+        <p class="max-w-xs text-sm font-medium text-canvas-ink">
+          See how you stack up against nearby cafés — on Pro.
+        </p>
+        <a class="btn-primary" href="/billing">Unlock competitor tracking</a>
+      </div>
     </div>
 
   {:else if competitors.length === 0}
@@ -548,6 +572,14 @@
             Remove one below to swap in a new competitor, or stay on this lineup to build
             stronger trend lines over time.
           </p>
+          {#if tier === 'paid'}
+            <!-- Only sanctioned Pro -> Max nudge: factual, shown once at the
+                 cap, never a banner, never repeated. -->
+            <p class="mt-2 text-xs text-canvas-muted">
+              Max tracks up to {MAX.competitors}, if you ever want more.
+              <a class="font-medium text-healthy-700 hover:underline" href="/billing">See Max →</a>
+            </p>
+          {/if}
         </div>
       {/if}
 

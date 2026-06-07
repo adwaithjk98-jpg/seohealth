@@ -7,6 +7,7 @@
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
   import { getAuditQuota, setBusinessSchedule, startAudit } from '$lib/api.js';
   import { formatRelativeTime } from '$lib/dashboard.js';
+  import { PRO, MAX } from '$lib/tiers.js';
 
   /** @type {{ data: { businesses: any[] | null, error: string | null } }} */
   let { data } = $props();
@@ -334,10 +335,10 @@
               Let us watch for you.
             </p>
             <p class="mt-1 max-w-md text-xs text-canvas-muted">
-              Paid plans re-check each business on a cadence — weekly, bi-weekly or monthly — and
-              email you only when your score moves.
+              Pro re-checks each business on a cadence — weekly, bi-weekly or monthly — and
+              emails you only when your score moves.
             </p>
-            <a class="btn-primary mt-3 inline-flex" href="/billing">See paid plan</a>
+            <a class="btn-primary mt-3 inline-flex" href="/billing">Upgrade to Pro</a>
           </div>
         </div>
       </section>
@@ -370,9 +371,16 @@
           {formatReset(quota?.period_end ?? null)}.
           {#if !isPaid}
             <a class="ml-1 font-medium text-attention-700 underline" href="/billing">
-              Upgrade to paid
+              Upgrade to Pro
             </a>
-            for 7 per week.
+            for {PRO.auditsPerWeek} checks a week.
+          {:else if tier === 'paid'}
+            <!-- Only sanctioned Pro -> Max nudge: factual, shown once at the
+                 cap, never repeated, never a banner. -->
+            <a class="ml-1 font-medium text-attention-700 underline" href="/billing">
+              Max
+            </a>
+            runs {MAX.auditsPerWeek} a week, if you ever need them.
           {/if}
         </p>
       {/if}
