@@ -1,6 +1,7 @@
 import re
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session as DbSession
 
@@ -14,6 +15,8 @@ from app.auth_deps import current_user
 from app.config import settings
 from app.db import get_db
 from app.models import User
+from app.models.discovery_scan import DiscoveryScan
+from app.ratelimit import limiter
 from app.services import auth as auth_service
 from app.services import email_service
 from app.services import subscriptions as subs_service
@@ -48,6 +51,8 @@ class MeResponse(BaseModel):
     # Friendly greeting label. NULL until the user fills the FTUE
     # questionnaire; the frontend falls back to the email-prefix.
     display_name: str | None = None
+    # Whether the weekly digest email is on for this user (account-page toggle).
+    weekly_digest_enabled: bool = True
     # Phase 3 — subscription tier + hard caps + most-recent subscription row,
     # so the SPA can render Billing state and gate "Add business" without a
     # second round-trip.
@@ -59,6 +64,7 @@ class UpdateMeBody(BaseModel):
     no plan, no email, no admin knobs."""
 
     display_name: str | None = Field(default=None, max_length=120)
+    weekly_digest_enabled: bool | None = Field(default=None)
 
 
 def _build_me_response(db: DbSession, user: User) -> "MeResponse":
@@ -87,6 +93,7 @@ def _build_me_response(db: DbSession, user: User) -> "MeResponse":
         email=user.email,
         plan=user.plan.value,
         display_name=user.display_name,
+        weekly_digest_enabled=user.weekly_digest_enabled,
         subscription_state=state,
     )
 
@@ -114,7 +121,9 @@ def _clear_session_cookie(response: Response) -> None:
 
 
 @router.post("/auth/request-link", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit(settings.rate_limit_request_link)
 def request_magic_link(
+    request: Request,
     payload: RequestLinkBody,
     db: DbSession = Depends(get_db),
 ) -> dict[str, str]:
@@ -202,9 +211,122 @@ def update_me(
     if payload.display_name is not None:
         cleaned = payload.display_name.strip()
         user.display_name = cleaned or None
+    if payload.weekly_digest_enabled is not None:
+        user.weekly_digest_enabled = payload.weekly_digest_enabled
     db.commit()
     db.refresh(user)
     return _build_me_response(db, user)
+
+
+def _to_iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+@router.get("/auth/me/export")
+def export_my_data(
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Self-service data export — everything we hold for this user, as JSON.
+
+    Satisfies the "user can get their data" requirement (DPDP / Play Store).
+    Walks the ORM relationships, so it stays correct as the schema grows.
+    """
+    businesses = []
+    for biz in user.businesses:
+        businesses.append(
+            {
+                "id": biz.id,
+                "name": biz.name,
+                "city": biz.city,
+                "maps_url": biz.maps_url,
+                "website": biz.website,
+                "ig_handle": biz.ig_handle,
+                "business_type": biz.business_type,
+                "added_at": _to_iso(biz.added_at),
+                "archived_at": _to_iso(biz.archived_at),
+                "audits": [
+                    {
+                        "id": a.id,
+                        "status": a.status.value,
+                        "trigger": a.trigger.value,
+                        "started_at": _to_iso(a.started_at),
+                        "finished_at": _to_iso(a.finished_at),
+                        "sections": [
+                            {
+                                "section": s.section.value,
+                                "score": s.score,
+                                "status": s.status.value,
+                            }
+                            for s in a.sections
+                        ],
+                        "recommendations": [
+                            {
+                                "section": r.section.value,
+                                "title": r.title,
+                                "severity": r.severity.value,
+                                "fix_status": r.fix_status.value,
+                            }
+                            for r in a.recommendations
+                        ],
+                    }
+                    for a in biz.audits
+                ],
+                "competitors": [
+                    {
+                        "name": c.name,
+                        "maps_url": c.maps_url,
+                        "website_url": c.website_url,
+                        "instagram_url": c.instagram_url,
+                    }
+                    for c in biz.competitors
+                ],
+            }
+        )
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "profile": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "plan": user.plan.value,
+            "signup_date": _to_iso(user.signup_date),
+            "weekly_digest_enabled": user.weekly_digest_enabled,
+        },
+        "businesses": businesses,
+        "subscriptions": [
+            {
+                "plan_tier": s.plan_tier,
+                "status": s.status.value,
+                "next_billing_date": _to_iso(s.next_billing_date),
+                "cancelled_at": _to_iso(s.cancelled_at),
+            }
+            for s in user.subscriptions
+        ],
+    }
+
+
+@router.delete("/auth/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_my_account(
+    response: Response,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Response:
+    """Hard-delete the account and everything attached to it.
+
+    Businesses → audits → sections/recs/observations and competitors all
+    cascade via ORM relationships. Discovery scans have no cascade
+    relationship, so we clear them explicitly first. Then the session cookie
+    is cleared so the SPA drops to signed-out state.
+    """
+    db.query(DiscoveryScan).filter(DiscoveryScan.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.delete(user)
+    db.commit()
+    _clear_session_cookie(response)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @router.get("/auth/session", response_model=SessionResponse)

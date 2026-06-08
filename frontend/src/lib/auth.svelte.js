@@ -39,6 +39,7 @@ import { goto } from '$app/navigation';
  * @property {string} email
  * @property {string} plan
  * @property {string | null} display_name
+ * @property {boolean} weekly_digest_enabled
  * @property {SubscriptionState | null} subscription_state
  */
 
@@ -142,10 +143,9 @@ export async function verifyMagicLink(token) {
 }
 
 /**
- * Update the signed-in user's profile. Today only ``display_name`` is
- * editable. Pass an empty string to clear the name (frontend will fall
- * back to the email-prefix).
- * @param {{ display_name?: string | null }} patch
+ * Update the signed-in user's profile. Pass an empty ``display_name`` to clear
+ * the name (frontend falls back to the email-prefix).
+ * @param {{ display_name?: string | null, weekly_digest_enabled?: boolean }} patch
  */
 export async function updateCurrentUser(patch) {
   const res = await fetch('/api/auth/me', {

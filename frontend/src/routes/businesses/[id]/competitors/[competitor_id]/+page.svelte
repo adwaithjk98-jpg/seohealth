@@ -47,12 +47,29 @@
   /** @type {'review_count' | 'rating' | 'instagram_followers' | 'instagram_posts'} */
   let metric = $state('review_count');
 
-  const metricOptions = /** @type {const} */ ([
-    { key: 'review_count', label: 'Reviews' },
-    { key: 'rating', label: 'Rating' },
-    { key: 'instagram_followers', label: 'IG followers' },
-    { key: 'instagram_posts', label: 'IG posts' }
-  ]);
+  // Only offer the Instagram toggles when we actually have an IG URL for this
+  // competitor — otherwise the chart is just an empty promise. The stat cards
+  // below still show the "add their Instagram URL" hint.
+  const hasIg = $derived(!!competitor?.instagram_url);
+  const metricOptions = $derived(
+    [
+      { key: 'review_count', label: 'Reviews' },
+      { key: 'rating', label: 'Rating' },
+      ...(hasIg
+        ? [
+            { key: 'instagram_followers', label: 'IG followers' },
+            { key: 'instagram_posts', label: 'IG posts' }
+          ]
+        : [])
+    ]
+  );
+
+  // If the IG toggles vanish (no IG URL) while one was selected, fall back.
+  $effect(() => {
+    if (!hasIg && (metric === 'instagram_followers' || metric === 'instagram_posts')) {
+      metric = 'review_count';
+    }
+  });
 
   // Compare-against picker. ``'all'`` is the default — the page is
   // most useful when the user can see this competitor against the full
@@ -268,7 +285,7 @@
                     ? 'bg-white text-canvas-ink shadow-soft'
                     : 'text-canvas-muted hover:text-canvas-ink'
                 }`}
-                onclick={() => (metric = opt.key)}
+                onclick={() => (metric = /** @type {typeof metric} */ (opt.key))}
               >
                 {opt.label}
               </button>

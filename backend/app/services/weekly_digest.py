@@ -134,7 +134,13 @@ def dispatch_weekly_digests(
     try:
         paid_users = (
             db.query(User)
-            .filter(User.plan == UserPlan.paid)
+            .filter(
+                # Both Pro and Max get the digest — only Free is excluded. (The
+                # old `== paid` here silently dropped Max users.)
+                User.plan != UserPlan.free,
+                # Honor the per-user opt-out.
+                User.weekly_digest_enabled.is_(True),
+            )
             .all()
         )
         for user in paid_users:

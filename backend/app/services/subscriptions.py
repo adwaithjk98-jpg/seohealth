@@ -394,6 +394,46 @@ def create_checkout(
     }
 
 
+def cancel_active_subscription(db: DbSession, user: User) -> bool:
+    """User-initiated cancellation. Returns True if a subscription was active.
+
+    Mock mode (no live keys, or a ``sub_mock_*`` id) just flips the row to
+    cancelled and drops the user to free. When live Razorpay is configured with
+    a real subscription id, this is also where the real
+    ``subscriptions.cancel`` API call belongs (wired with the live keys — see
+    launch_checklist). Downgrades (Max → Pro) go through ``create_checkout`` with
+    the lower tier, not this function.
+    """
+    row = active_subscription(db, user.id)
+    if row is None:
+        # Nothing active — make sure the user isn't stranded on a paid plan.
+        if user.plan != UserPlan.free:
+            _ensure_user_plan(db, user, UserPlan.free)
+            db.commit()
+            db.refresh(user)
+        return False
+
+    is_mock = not row.razorpay_subscription_id or row.razorpay_subscription_id.startswith(
+        "sub_mock_"
+    )
+    if is_razorpay_configured() and not is_mock and row.razorpay_subscription_id:
+        # TODO(live): call Razorpay subscriptions.cancel(row.razorpay_subscription_id)
+        # here once KYC + live keys land. Until then we only reach this branch
+        # in a misconfigured state, so fall through to the local flip.
+        logger.info(
+            "live cancel requested for %s — local flip only (Razorpay cancel API not wired)",
+            row.razorpay_subscription_id,
+        )
+
+    row.status = SubscriptionStatus.cancelled
+    row.cancelled_at = _now()
+    _ensure_user_plan(db, user, UserPlan.free)
+    db.commit()
+    db.refresh(row)
+    db.refresh(user)
+    return True
+
+
 def verify_webhook_signature(body_bytes: bytes, signature: str | None) -> bool:
     """Verify Razorpay's HMAC-SHA256 webhook signature.
 

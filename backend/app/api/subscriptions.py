@@ -101,6 +101,22 @@ def start_checkout(
     )
 
 
+@router.post("/subscriptions/cancel", response_model=SubscriptionState)
+def cancel_subscription(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> SubscriptionState:
+    """Cancel the user's active subscription and drop them to Free.
+
+    Idempotent: cancelling with nothing active just returns current state.
+    Downgrades (Max → Pro) are a separate flow — POST /subscriptions/checkout
+    with ``plan_tier='paid'``.
+    """
+    subs_service.cancel_active_subscription(db, user)
+    db.refresh(user)
+    return _build_state(db, user)
+
+
 @router.post("/subscriptions/webhook")
 async def razorpay_webhook(
     request: Request,

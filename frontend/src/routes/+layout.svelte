@@ -39,6 +39,21 @@
   let nameSaving = $state(false);
   let nameError = $state(/** @type {string | null} */ (null));
 
+  // Network status — drives a calm offline banner. The service worker still
+  // serves cached views, so "offline" is informational, not a dead end.
+  let online = $state(true);
+  $effect(() => {
+    online = navigator.onLine;
+    const on = () => (online = true);
+    const off = () => (online = false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  });
+
   // The single persistent upgrade affordance lives in the account area and is
   // free-only. Never a banner, never animated — just always quietly there.
   const tier = $derived(
@@ -172,6 +187,7 @@
               Upgrade to Pro
             </a>
           {/if}
+          <a class="btn-ghost hidden sm:inline-flex" href="/account">Account</a>
           <a class="btn-ghost hidden sm:inline-flex" href="/billing">Billing</a>
           <span class="hidden text-xs text-canvas-muted sm:inline" title={authState.user.email}>
             {greetingName(authState.user)}
@@ -256,6 +272,13 @@
                   </a>
                 {/if}
                 <a
+                  href="/account"
+                  class="btn-ghost mt-2 w-full justify-start"
+                  role="menuitem"
+                >
+                  Account
+                </a>
+                <a
                   href="/billing"
                   class="btn-ghost mt-2 w-full justify-start"
                   role="menuitem"
@@ -278,6 +301,17 @@
       </nav>
     </div>
   </header>
+
+  {#if !online}
+    <div
+      class="bg-attention-100 px-4 py-2 text-center text-xs font-medium text-attention-700"
+      role="status"
+      aria-live="polite"
+      transition:fly={{ y: -8, duration: 200, easing: quintOut }}
+    >
+      You're offline — showing your last loaded view. We'll catch up when you're back.
+    </div>
+  {/if}
 
   <main class="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
     {@render children()}

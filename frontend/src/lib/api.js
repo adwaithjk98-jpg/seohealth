@@ -292,6 +292,31 @@ export async function startSubscriptionCheckout(planTier = 'paid') {
   return res.json();
 }
 
+export async function cancelSubscription() {
+  const res = await fetch('/api/subscriptions/cancel', {
+    method: 'POST',
+    credentials: 'same-origin'
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
+export async function exportMyData() {
+  const res = await fetch('/api/auth/me/export', { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
+export async function deleteMyAccount() {
+  const res = await fetch('/api/auth/me', {
+    method: 'DELETE',
+    credentials: 'same-origin'
+  });
+  // 204 No Content is success but has no JSON body.
+  if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
+  return true;
+}
+
 // Razorpay Checkout JS is only needed when real keys are configured. Load it
 // on demand so dev/mock flows never pay the third-party request cost.
 let _razorpayScriptPromise = null;

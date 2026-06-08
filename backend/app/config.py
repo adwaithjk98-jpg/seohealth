@@ -73,6 +73,18 @@ class Settings(BaseSettings):
     # request) doesn't benefit from a larger model.
     anthropic_insights_model: str = "claude-haiku-4-5-20251001"
 
+    # Sentry error monitoring. No-op when empty (dev default). Set the DSN in
+    # prod to start capturing exceptions. ``sentry_traces_sample_rate`` controls
+    # performance tracing volume — 0 keeps it error-only (free-tier friendly).
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+
+    # HTTP rate limiting (slowapi). Limits are per-client-IP. Tunable per env;
+    # the defaults are generous enough not to bite a real user but cap abuse.
+    rate_limit_enabled: bool = True
+    rate_limit_request_link: str = "5/minute"
+    rate_limit_create: str = "30/minute"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

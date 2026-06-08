@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+
+from app.config import settings
+from app.ratelimit import limiter
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
@@ -183,7 +186,9 @@ def _find_existing_business(
     response_model=BusinessResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit(settings.rate_limit_create)
 def create_business(
+    request: Request,
     payload: BusinessCreateRequest,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),

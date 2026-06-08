@@ -23,3 +23,7 @@ rq-scheduler==0.13.1
 # deterministic sentence when ANTHROPIC_API_KEY is unset, so the dep is
 # pulled in but the runtime tolerates it being missing too.
 anthropic==0.42.0
+
+# HTTP rate limiting + error monitoring (added 2026-06-08)
+slowapi==0.1.9
+sentry-sdk[fastapi]==2.20.0

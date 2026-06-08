@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, String, func
+from sqlalchemy import Boolean, DateTime, Enum, String, func, text
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +31,12 @@ class User(Base):
         DateTime, server_default=func.now(), nullable=False
     )
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Whether the user receives the weekly digest email. Default on; the
+    # account page + the email's unsubscribe link flip it. Dispatch filters on
+    # it so opt-out is honored before we ever send to real users.
+    weekly_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
 
     businesses: Mapped[list["Business"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
