@@ -10,6 +10,10 @@
  *   key: 'free' | 'paid' | 'max',
  *   name: string,
  *   price: string,
+ *   amount: string,
+ *   cadence: string,
+ *   tagline: string,
+ *   features: string[],
  *   businesses: number,
  *   auditsPerWeek: number,
  *   competitors: number,
@@ -23,6 +27,10 @@ export const TIERS = {
     key: 'free',
     name: 'Free',
     price: '₹0',
+    amount: '₹0',
+    cadence: 'free forever',
+    tagline: 'See exactly where your business stands online.',
+    features: ['1 business', 'Monthly health check', 'Plain-English recommendations'],
     businesses: 1,
     auditsPerWeek: 1,
     competitors: 0,
@@ -32,6 +40,15 @@ export const TIERS = {
     key: 'paid',
     name: 'Pro',
     price: '₹549/mo',
+    amount: '₹549',
+    cadence: '/month',
+    tagline: 'Everything you need to grow your local presence.',
+    features: [
+      'Weekly auto-audits',
+      'Competitor discovery & tracking',
+      'Monday digest when your score moves',
+      'Step-by-step guided fixes'
+    ],
     businesses: 1,
     auditsPerWeek: 7,
     competitors: 4,
@@ -41,12 +58,25 @@ export const TIERS = {
     key: 'max',
     name: 'Max',
     price: '₹2,500/mo',
+    amount: '₹2,500',
+    cadence: '/month',
+    tagline: 'Breadth for multi-location owners and agencies.',
+    features: [
+      'Everything in Pro',
+      'Up to 10 businesses',
+      '8 competitors tracked',
+      '4 discovery scans / month',
+      'Per-business weekly digest'
+    ],
     businesses: 10,
     auditsPerWeek: 25,
     competitors: 8,
     discoveryScansPerMonth: 4
   }
 };
+
+/** Tier keys in display order (Free → Pro → Max). */
+export const TIER_ORDER = /** @type {const} */ (['free', 'paid', 'max']);
 
 /** Pro tier — the Free → Pro growth target. */
 export const PRO = TIERS.paid;

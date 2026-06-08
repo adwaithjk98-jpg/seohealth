@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
 
@@ -68,10 +68,35 @@
     goto(url, { keepFocus: true, noScroll: true });
   }
 
+  // "Back" / closing a finding should return to wherever the user came from —
+  // this page is reached from the insights list, a business detail page, AND
+  // the audit dashboard, so a hardcoded /dashboard link (or just stripping the
+  // ?finding param) stranded people on the wrong page. afterNavigate tells us
+  // if there's an in-app history entry to pop; otherwise (a fresh load or deep
+  // link) we fall back to the dashboard / stripping the param.
+  let cameFromApp = $state(false);
+  afterNavigate(({ from }) => {
+    if (from) cameFromApp = true;
+  });
+  const backLabel = $derived(cameFromApp ? 'Back' : 'Back to dashboard');
+
+  function goBack() {
+    if (cameFromApp) history.back();
+    else goto('/dashboard');
+  }
+
   function closeFinding() {
-    const url = new URL($page.url);
-    url.searchParams.delete('finding');
-    goto(url, { keepFocus: true, noScroll: true, replaceState: true });
+    // The finding modal is a history entry (opening pushed ?finding, or the
+    // insights/business link landed here with it). Closing pops that entry so
+    // the user returns to their origin — not the bare section page they never
+    // asked to see. Deep-link fallback: strip the param in place.
+    if (cameFromApp) {
+      history.back();
+    } else {
+      const url = new URL($page.url);
+      url.searchParams.delete('finding');
+      goto(url, { keepFocus: true, noScroll: true, replaceState: true });
+    }
   }
 
   function applyUpdatedRec(updated) {
@@ -166,9 +191,9 @@
         >
           ↻ Try again
         </button>
-        <a href="/dashboard" class="btn-ghost text-action-700">
-          ← Back to dashboard
-        </a>
+        <button type="button" class="btn-ghost text-action-700" onclick={goBack}>
+          ← {backLabel}
+        </button>
       </div>
     </div>
   </section>
@@ -180,19 +205,20 @@
       <p class="mt-1 text-sm text-canvas-muted">
         It may not have been part of your most recent health check.
       </p>
-      <a href="/dashboard" class="btn-primary mt-4 inline-flex">
-        ← Back to dashboard
-      </a>
+      <button type="button" class="btn-primary mt-4 inline-flex" onclick={goBack}>
+        ← {backLabel}
+      </button>
     </div>
   </section>
 {:else}
   <section class="space-y-8">
-    <a
-      href="/dashboard"
+    <button
+      type="button"
+      onclick={goBack}
       class="inline-flex items-center gap-1 text-sm text-canvas-muted hover:text-canvas-ink"
     >
-      ← Back to dashboard
-    </a>
+      ← {backLabel}
+    </button>
 
     <header class="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
       <div class="flex items-start gap-4">

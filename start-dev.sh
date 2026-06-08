@@ -140,15 +140,21 @@ else
   log "==== some processes failed — see warnings above ===="
 fi
 
-# --- (re)spawn the singleton self-heal watchdog ---------------------------
-# Skipped when WE were invoked BY the watchdog (--no-watch), so it never
-# recursively spawns itself. The watchdog keeps the stack alive across
-# sleep/wake + crashes; start-dev's own pkills don't match it.
+# --- ensure the singleton self-heal watchdog is running -------------------
+# IDEMPOTENT, on purpose: only spawn a watchdog if none is running. We must
+# NOT kill+respawn an existing one — if the watchdog was started by the macOS
+# Login Item (your GUI session) it survives across everything, but respawning
+# it from some other process (e.g. a transient shell that exits) would
+# re-parent it into that doomed session and it would die with it. Skipped
+# under --no-watch (the watchdog itself calls start-dev.sh that way, so it
+# never spawns a second copy of itself).
 if [[ $NO_WATCH -eq 0 ]]; then
-  pkill -f "start-dev-guard.sh" >/dev/null 2>&1 || true
-  sleep 1
-  nohup "$REPO_DIR/start-dev-guard.sh" >/dev/null 2>&1 &
-  log "spawned self-heal watchdog (pid $!)"
+  if pgrep -f "start-dev-guard.sh" >/dev/null 2>&1; then
+    log "self-heal watchdog already running — leaving it as-is"
+  else
+    nohup "$REPO_DIR/start-dev-guard.sh" >/dev/null 2>&1 &
+    log "spawned self-heal watchdog (pid $!)"
+  fi
 fi
 
 [[ $ok -eq 1 ]] || exit 1

@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
 
   import { fade, fly } from 'svelte/transition';
+  import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser, refreshCurrentUser } from '$lib/auth.svelte.js';
   import {
@@ -10,6 +11,8 @@
     startSubscriptionCheckout,
     loadRazorpayCheckout
   } from '$lib/api.js';
+  import { TIERS, TIER_ORDER } from '$lib/tiers.js';
+  import { reduced } from '$lib/motion.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
 
   /** @type {any} */
@@ -43,6 +46,42 @@
   const limits = $derived(subscriptionData?.limits ?? { businesses: 1, audits_per_week: 1 });
   const businessCount = $derived(subscriptionData?.business_count ?? 0);
   const subscription = $derived(subscriptionData?.subscription ?? null);
+
+  // --- Plan switcher (pill + swipe) ---
+  const rank = { free: 0, paid: 1, max: 2 };
+  // Default to the user's current paid tier, or Pro for free users (the
+  // "most chosen" upsell). Set once, after state loads, so it doesn't fight
+  // the user's own pill taps.
+  let selected = $state(/** @type {'free' | 'paid' | 'max'} */ ('paid'));
+  let selectedSet = false;
+  $effect(() => {
+    if (subscriptionData && !selectedSet) {
+      selected = tier === 'free' ? 'paid' : tier;
+      selectedSet = true;
+    }
+  });
+  const selectedIndex = $derived(TIER_ORDER.indexOf(selected));
+  const selectedMeta = $derived(TIERS[selected]);
+  const selectedRank = $derived(rank[selected]);
+  const currentRank = $derived(rank[/** @type {'free' | 'paid' | 'max'} */ (tier)] ?? 0);
+
+  /** @param {number} i */
+  function selectIndex(i) {
+    selected = TIER_ORDER[Math.max(0, Math.min(TIER_ORDER.length - 1, i))];
+  }
+
+  // Swipe left/right to move between plans.
+  let touchStartX = 0;
+  /** @param {TouchEvent} e */
+  function onTouchStart(e) {
+    touchStartX = e.changedTouches[0].clientX;
+  }
+  /** @param {TouchEvent} e */
+  function onTouchEnd(e) {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) < 40) return; // ignore taps / tiny drags
+    selectIndex(selectedIndex + (dx < 0 ? 1 : -1));
+  }
 
   /** @param {'paid' | 'max'} planTier */
   async function handleUpgrade(planTier = 'paid') {
@@ -226,80 +265,145 @@
       {/if}
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-3">
-      <div class="card p-5">
-        <p class="text-xs uppercase tracking-wide text-canvas-muted">Free</p>
-        <p class="mt-1 text-xl font-semibold text-canvas-ink">₹0 / month</p>
-        <ul class="mt-3 space-y-1.5 text-sm text-canvas-ink">
-          <li>1 business</li>
-          <li>Monthly auto-audit</li>
-          <li>Plain-English recommendations</li>
-        </ul>
-        <p class="mt-4 text-xs text-canvas-muted">
-          {tier === 'free' ? "You're on this plan." : 'Included in every plan.'}
-        </p>
-      </div>
+    <!-- Plan switcher: a pill toggles Free / Pro / Max, and the single card
+         below swaps to the selected plan. Swipe left/right works too. -->
+    <div class="space-y-4">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
+        Choose your plan
+      </h2>
 
-      <div class="card border border-healthy-100 bg-healthy-50/40 p-5">
-        <p class="text-xs uppercase tracking-wide text-healthy-700">Pro</p>
-        <p class="mt-1 text-xl font-semibold text-canvas-ink">₹549 / month</p>
-        <ul class="mt-3 space-y-1.5 text-sm text-canvas-ink">
-          <li>Weekly auto-audits</li>
-          <li>Competitor discovery &amp; tracking</li>
-          <li>Monday digest when your score moves</li>
-          <li>Step-by-step guided fixes</li>
-        </ul>
-        {#if tier === 'free'}
+      <div
+        class="relative flex rounded-2xl border border-canvas-soft bg-canvas-soft/40 p-1"
+        role="tablist"
+        aria-label="Plans"
+      >
+        <span
+          class="pointer-events-none absolute bottom-1 left-1 top-1 rounded-xl bg-white shadow-soft transition-transform duration-200 ease-out motion-reduce:transition-none"
+          style="width: calc((100% - 0.5rem) / 3); transform: translateX({selectedIndex * 100}%);"
+          aria-hidden="true"
+        ></span>
+        {#each TIER_ORDER as key, i}
           <button
             type="button"
-            class="btn-primary mt-4 w-full"
-            onclick={() => handleUpgrade('paid')}
-            disabled={upgrading}
+            role="tab"
+            aria-selected={selected === key}
+            onclick={() => selectIndex(i)}
+            class={`relative z-10 flex-1 rounded-xl px-3 py-2 text-sm font-medium transition-colors duration-200 ${
+              selected === key ? 'text-canvas-ink' : 'text-canvas-muted hover:text-canvas-ink'
+            }`}
           >
-            {upgrading && upgradingTier === 'paid' ? 'Starting checkout…' : 'Upgrade to Pro'}
+            {TIERS[key].name}
+            {#if tier === key}
+              <span class="ml-1 text-[10px] font-normal text-canvas-muted">· current</span>
+            {/if}
           </button>
-          <p class="mt-3 text-center text-xs text-canvas-muted">
-            Razorpay Test Mode — no real card will be charged.
-          </p>
-        {:else if tier === 'paid'}
-          <p class="mt-4 text-center text-xs text-healthy-700 font-medium">
-            You're on the Pro plan.
-          </p>
-        {:else}
-          <p class="mt-4 text-center text-xs text-canvas-muted">
-            Included in your Max plan.
-          </p>
-        {/if}
+        {/each}
       </div>
 
-      <div class="card border border-attention-100 bg-attention-50/40 p-5">
-        <p class="text-xs uppercase tracking-wide text-attention-700">Max</p>
-        <p class="mt-1 text-xl font-semibold text-canvas-ink">₹2,500 / month</p>
-        <ul class="mt-3 space-y-1.5 text-sm text-canvas-ink">
-          <li>Everything in Pro</li>
-          <li>Up to 10 businesses</li>
-          <li>8 competitors tracked</li>
-          <li>4 discovery scans / month</li>
-          <li>Per-business weekly digest</li>
-        </ul>
-        {#if isMax}
-          <p class="mt-4 text-center text-xs text-attention-700 font-medium">
-            You're on the Max plan.
-          </p>
-        {:else}
-          <button
-            type="button"
-            class="btn-primary mt-4 w-full"
-            onclick={() => handleUpgrade('max')}
-            disabled={upgrading}
+      <div
+        role="group"
+        aria-label="Selected plan details"
+        ontouchstart={onTouchStart}
+        ontouchend={onTouchEnd}
+      >
+        {#key selected}
+          <div
+            class={`card p-6 sm:p-8 ${
+              selected === 'paid'
+                ? 'border-healthy-100 bg-healthy-50/30'
+                : selected === 'max'
+                  ? 'border-attention-100 bg-attention-50/30'
+                  : ''
+            }`}
+            in:fly={reduced({ y: 8, duration: 200, easing: quintOut })}
           >
-            {upgrading && upgradingTier === 'max' ? 'Starting checkout…' : 'Upgrade to Max'}
-          </button>
-          <p class="mt-3 text-center text-xs text-canvas-muted">
-            For multi-location owners &amp; agencies.
-          </p>
-        {/if}
+            {#if selected === 'paid'}
+              <span
+                class="inline-flex items-center gap-1.5 rounded-full bg-healthy-100 px-3 py-1 text-xs font-medium text-healthy-700"
+              >
+                ★ Most chosen
+              </span>
+            {:else if selected === 'max'}
+              <span
+                class="inline-flex items-center gap-1.5 rounded-full bg-attention-100 px-3 py-1 text-xs font-medium text-attention-700"
+              >
+                Multi-location &amp; agencies
+              </span>
+            {/if}
+
+            <h3 class="mt-3 text-2xl font-semibold tracking-tight text-canvas-ink">
+              AuditHealth
+              <span class={selected === 'max' ? 'text-attention-700' : 'text-healthy-700'}>
+                {selectedMeta.name}
+              </span>
+            </h3>
+            <p class="mt-1 text-sm text-canvas-muted">{selectedMeta.tagline}</p>
+
+            <p class="mt-5 flex items-baseline gap-1">
+              <span class="text-4xl font-semibold tracking-tight text-canvas-ink">
+                {selectedMeta.amount}
+              </span>
+              <span class="text-sm text-canvas-muted">{selectedMeta.cadence}</span>
+            </p>
+
+            <ul class="mt-5 space-y-3">
+              {#each selectedMeta.features as feat}
+                <li class="flex items-center gap-3 text-sm text-canvas-ink">
+                  <span
+                    class="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-healthy-50 text-healthy-600"
+                    aria-hidden="true"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class="h-3 w-3"
+                    >
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  </span>
+                  {feat}
+                </li>
+              {/each}
+            </ul>
+
+            <div class="mt-6">
+              {#if selected === tier}
+                <p
+                  class="rounded-xl bg-canvas-soft px-4 py-3 text-center text-sm font-medium text-canvas-ink"
+                >
+                  Your current plan
+                </p>
+              {:else if selectedRank > currentRank}
+                <button
+                  type="button"
+                  class="btn-primary w-full"
+                  onclick={() => handleUpgrade(/** @type {'paid' | 'max'} */ (selected))}
+                  disabled={upgrading}
+                >
+                  {upgrading && upgradingTier === selected
+                    ? 'Starting checkout…'
+                    : `Upgrade to ${selectedMeta.name}`}
+                </button>
+                <p class="mt-3 text-center text-xs text-canvas-muted">
+                  Razorpay Test Mode — no real card will be charged.
+                </p>
+              {:else}
+                <a href="/account" class="btn-ghost w-full">Manage in Account</a>
+                <p class="mt-3 text-center text-xs text-canvas-muted">
+                  Downgrades &amp; cancellation live on your account page.
+                </p>
+              {/if}
+            </div>
+          </div>
+        {/key}
       </div>
+
+      <p class="text-center text-xs text-canvas-muted">Swipe or tap a plan to compare.</p>
     </div>
   {/if}
 </section>
