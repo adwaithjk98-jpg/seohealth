@@ -41,6 +41,10 @@
     }
     return false;
   }
+
+  // Index of the active tab, for the sliding pill. Clamp to 0 so the pill
+  // always has a home even on a route none of the tabs strictly match.
+  const activeIndex = $derived(Math.max(0, tabs.findIndex((t) => isActive(t.key))));
 </script>
 
 <div class="space-y-6">
@@ -58,19 +62,25 @@
     ``hover`` is a no-op.
   -->
   <nav
-    class="flex items-center gap-1 rounded-2xl border border-canvas-soft bg-canvas-soft/40 p-1"
+    class="relative flex items-center rounded-2xl border border-canvas-soft bg-canvas-soft/40 p-1"
     aria-label="Workspace sections"
     data-sveltekit-preload-code="viewport"
     data-sveltekit-preload-data="tap"
   >
+    <!-- Sliding active pill. One element that translates between the three
+         equal-width tabs, so the highlight glides instead of snapping. The
+         tabs themselves are transparent and sit above it (z-10). -->
+    <span
+      class="pointer-events-none absolute bottom-1 left-1 top-1 rounded-xl bg-white shadow-soft transition-transform duration-200 ease-out motion-reduce:transition-none"
+      style="width: calc((100% - 0.5rem) / 3); transform: translateX({activeIndex * 100}%);"
+      aria-hidden="true"
+    ></span>
     {#each tabs as tab (tab.key)}
       {@const active = isActive(tab.key)}
       <a
         href={tab.href}
-        class={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors duration-200 ${
-          active
-            ? 'bg-white text-canvas-ink shadow-soft'
-            : 'text-canvas-muted hover:text-canvas-ink'
+        class={`relative z-10 inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors duration-200 ${
+          active ? 'text-canvas-ink' : 'text-canvas-muted hover:text-canvas-ink'
         }`}
         aria-current={active ? 'page' : undefined}
       >

@@ -128,3 +128,22 @@
     }
   }
 }
+
+/* ---- Route transitions (View Transitions API; root +layout onNavigate) ----
+   The default cross-document transition is a crossfade of the whole page; we
+   only tune its timing to match the app's interaction feel. Keep this
+   top-level (not inside @layer) — the ::view-transition pseudo-elements live
+   on the document, not the cascade layers. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

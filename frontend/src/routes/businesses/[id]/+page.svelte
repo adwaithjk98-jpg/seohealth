@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
+  import { reduced } from '$lib/motion.js';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
   import {
@@ -329,7 +330,7 @@
         </p>
       </div>
 
-      <div in:fade={{ duration: 350 }}>
+      <div in:fade={reduced({ duration: 350 })}>
         <ScoreGauge
           score={audit.overall_score}
           grade={audit.overall_grade}
@@ -351,7 +352,7 @@
       </div>
       <div class="mt-4 grid gap-4 sm:grid-cols-2">
         {#each sections as section, i (section.section)}
-          <div in:fly={{ y: 12, delay: 80 * i, duration: 320, easing: quintOut }}>
+          <div in:fly={reduced({ y: 12, delay: 80 * i, duration: 320, easing: quintOut })}>
             <SectionCard
               {section}
               href={`/audits/${auditId}/dashboard/sections/${section.section}`}

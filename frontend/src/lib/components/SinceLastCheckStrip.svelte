@@ -1,6 +1,7 @@
 <script>
   import { fade, fly } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
+  import { reduced } from '$lib/motion.js';
 
   /**
    * @type {{
@@ -34,7 +35,7 @@
 {#if visible}
   <section
     class="card border border-healthy-100 bg-healthy-50/40 p-4 sm:p-5"
-    in:fade={{ duration: 200 }}
+    in:fade={reduced({ duration: 200 })}
     aria-labelledby="since-last-check-heading"
   >
     <div class="flex flex-wrap items-start justify-between gap-3">
@@ -87,7 +88,7 @@
     {#if expanded}
       <div
         class="mt-4 space-y-3 text-xs"
-        in:fly={{ y: 4, duration: 180, easing: quintOut }}
+        in:fly={reduced({ y: 4, duration: 180, easing: quintOut })}
       >
         {#if confirmedCount > 0}
           <div>

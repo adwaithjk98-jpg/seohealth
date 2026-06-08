@@ -4,7 +4,25 @@
   import { fly } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { goto, onNavigate } from '$app/navigation';
+  import { prefersReducedMotion } from '$lib/motion.js';
+
+  // Smooth crossfade between routes via the View Transitions API. Graceful
+  // no-op on browsers without it; skipped under reduced motion (app.css also
+  // disables the animation as a belt-and-suspenders). ~200ms to match the
+  // app's interaction timings.
+  onNavigate((navigation) => {
+    // @ts-ignore — startViewTransition isn't in the default lib.dom types yet
+    if (typeof document === 'undefined' || !document.startViewTransition) return;
+    if (prefersReducedMotion()) return;
+    return new Promise((resolve) => {
+      // @ts-ignore
+      document.startViewTransition(async () => {
+        resolve();
+        await navigation.complete;
+      });
+    });
+  });
 
   import {
     authState,

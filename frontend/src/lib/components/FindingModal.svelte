@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
+  import { reduced } from '$lib/motion.js';
 
   import { patchRecommendation } from '$lib/api.js';
   import {
@@ -127,8 +128,8 @@
 
 <div
   class="fixed inset-0 z-50 flex items-end justify-center bg-canvas-ink/40 px-3 py-6 sm:items-center sm:py-12"
-  in:fade={{ duration: 200 }}
-  out:fade={{ duration: 150 }}
+  in:fade={reduced({ duration: 200 })}
+  out:fade={reduced({ duration: 150 })}
   onclick={onClose}
   role="presentation"
 >
@@ -137,8 +138,8 @@
     style={dragging
       ? `transform: translateY(${dragOffset}px); transition: none;`
       : 'transform: translateY(0); transition: transform 200ms ease-out;'}
-    in:fly={{ y: 16, duration: 320, easing: quintOut }}
-    out:fly={{ y: 12, duration: 200 }}
+    in:fly={reduced({ y: 16, duration: 320, easing: quintOut })}
+    out:fly={reduced({ y: 12, duration: 200 })}
     onclick={(e) => e.stopPropagation()}
     role="dialog"
     aria-modal="true"
