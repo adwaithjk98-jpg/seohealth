@@ -145,7 +145,21 @@ def next_auto_audit_at(
     return due_at if due_at > now else now
 
 
-def dispatch_due_audits() -> dict[str, int | str]:
+# Schedule spread: instead of one daily 06:00 thundering herd that dumps every
+# due audit into the queue at once (where a single worker drains them serially
+# and competes with live user audits), the dispatcher runs HOURLY and each
+# business only fires in its own deterministic hour bucket. id % 24 spreads the
+# daily load evenly across 24 hours with zero per-business state. A weekly audit
+# lands at the same hour each week (its bucket); cadence is unaffected.
+_SPREAD_BUCKETS = 24
+
+
+def _hour_bucket(business_id: int) -> int:
+    """Deterministic 0–23 hour slot for a business. Stable across runs."""
+    return business_id % _SPREAD_BUCKETS
+
+
+def dispatch_due_audits(force_all: bool = False) -> dict[str, int | str]:
     """Scheduler entrypoint. Returns a small summary for the worker log.
 
     Walks every non-archived paid-tier business that has a cadence set,
@@ -153,6 +167,10 @@ def dispatch_due_audits() -> dict[str, int | str]:
     weekly quota or the business already has an in-flight audit. Per-user
     quota counter is recomputed *as we go* so a user with multiple
     overdue businesses doesn't blow past their cap in a single tick.
+
+    Runs hourly; each due business only fires in its own ``id % 24`` hour
+    bucket, spreading the load across the day. Pass ``force_all=True`` to
+    bypass the hour gate (e.g. a manual "run every due audit now").
     """
     now = _now_naive()
     db = SessionLocal()
@@ -160,6 +178,7 @@ def dispatch_due_audits() -> dict[str, int | str]:
     skipped_active = 0
     skipped_not_due = 0
     skipped_no_quota = 0
+    skipped_off_hour = 0
     examined = 0
     try:
         rows = (
@@ -180,6 +199,12 @@ def dispatch_due_audits() -> dict[str, int | str]:
 
         for business, user in rows:
             examined += 1
+            # Schedule spread: only this hour's bucket fires (unless forced).
+            # Cheapest gate first, so we skip ~23/24 of rows before any
+            # per-business queries.
+            if not force_all and _hour_bucket(business.id) != now.hour:
+                skipped_off_hour += 1
+                continue
             if _has_active_audit(db, business.id):
                 skipped_active += 1
                 continue
@@ -224,6 +249,7 @@ def dispatch_due_audits() -> dict[str, int | str]:
             "skipped_active": skipped_active,
             "skipped_not_due": skipped_not_due,
             "skipped_no_quota": skipped_no_quota,
+            "skipped_off_hour": skipped_off_hour,
             "ran_at": now.isoformat(),
         }
         logger.info("auto-audit dispatch: %s", summary)

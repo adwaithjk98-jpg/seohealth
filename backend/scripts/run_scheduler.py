@@ -4,7 +4,7 @@ What it does
 ------------
 On startup, registers two recurring jobs:
 
-    * cron: ``"0 6 * * *"`` (daily 06:00 UTC)
+    * cron: ``"0 * * * *"`` (hourly; each business fires in its id%24 bucket)
       func: ``app.services.auto_audit.dispatch_due_audits``
     * cron: ``"0 7 * * *"`` (daily 07:00 UTC)
       func: ``app.services.prune_old_data.prune_old_audit_data``
@@ -45,9 +45,13 @@ _DISPATCH_FUNC = "app.services.auto_audit.dispatch_due_audits"
 _PRUNE_FUNC = "app.services.prune_old_data.prune_old_audit_data"
 _COMPETITOR_REFRESH_FUNC = "app.services.competitor_refresh.refresh_due_competitors"
 _WEEKLY_DIGEST_FUNC = "app.services.weekly_digest.dispatch_weekly_digests"
-# Daily at 06:00 UTC — early-morning IST. The cadence per business is
-# enforced inside the dispatcher; this just decides how often we *check*.
-_CRON_STRING = "0 6 * * *"
+# HOURLY (top of every hour). The per-business cadence is enforced inside the
+# dispatcher, and each due business only fires in its own ``id % 24`` hour
+# bucket — so this hourly tick spreads the day's audits evenly across 24 hours
+# instead of dumping them all in one 06:00 batch (which a single worker would
+# drain serially while competing with live user audits). See
+# auto_audit.dispatch_due_audits.
+_CRON_STRING = "0 * * * *"
 # Daily at 07:00 UTC — runs an hour after the dispatcher so the prune
 # sweep doesn't contend with a flurry of freshly-enqueued audits. The
 # pruner itself is just an UPDATE so the offset is comfort, not correctness.
