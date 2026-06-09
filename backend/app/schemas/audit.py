@@ -43,6 +43,11 @@ class AuditSectionResponse(BaseModel):
     score: int | None
     grade: str
     status: str
+    # Whether this pillar is opted-in for the business (FTUE has_website /
+    # has_instagram). build_audit_detail computes it; without it declared here
+    # Pydantic would drop it from the response and the frontend could never
+    # hide opted-out pillars. Defaults True so legacy payloads read as enabled.
+    enabled: bool = True
     summary: str | None
     raw_data: dict[str, Any] | None
     sub_checks: list[SubCheckResponse]
