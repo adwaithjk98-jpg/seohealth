@@ -7,6 +7,14 @@
   import { MAX } from '$lib/tiers.js';
   import InfoHint from '$lib/components/InfoHint.svelte';
 
+  /** Accept a bare domain ("bescoat.com") by prepending https:// when the user
+   * didn't type a scheme. Keeps a full URL untouched. */
+  function normalizeWebsite(/** @type {string} */ value) {
+    const v = value.trim();
+    if (!v) return '';
+    return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  }
+
   let mode = $state(/** @type {'name' | 'url'} */ ('name'));
   let businessName = $state('');
   let city = $state('');
@@ -123,7 +131,7 @@
       businessPayload.has_instagram = hasInstagram;
 
       if (hasWebsite) {
-        const websiteValue = website.trim();
+        const websiteValue = normalizeWebsite(website);
         if (websiteValue) businessPayload.website = websiteValue;
       }
       if (hasInstagram) {
@@ -414,9 +422,11 @@
             <div class="pt-1" in:fly={{ y: 4, duration: 180, easing: quintOut }}>
               <input
                 id="website"
-                type="url"
+                type="text"
+                inputmode="url"
+                autocapitalize="none"
                 class="field"
-                placeholder="https://yourbusiness.com  (optional)"
+                placeholder="yourbusiness.com  (optional)"
                 autocomplete="url"
                 bind:value={website}
               />
