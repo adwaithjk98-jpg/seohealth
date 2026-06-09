@@ -67,6 +67,14 @@
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(input)}`;
   }
 
+  /** Prepend https:// for a bare domain ("foo.com") so the field isn't
+   * rejected and the value stays fetchable. Returns undefined when empty. */
+  function normalizeUrl(/** @type {string} */ value) {
+    const v = value.trim();
+    if (!v) return undefined;
+    return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  }
+
   async function handleSubmit() {
     if (submitting) return;
     if (!anchorBusiness) {
@@ -88,8 +96,8 @@
         await addCompetitor(anchorBusiness.id, {
           maps_url: url,
           name: competitorName.trim() || undefined,
-          instagram_url: instagramUrl.trim() || undefined,
-          website_url: websiteUrl.trim() || undefined
+          instagram_url: normalizeUrl(instagramUrl),
+          website_url: normalizeUrl(websiteUrl)
         });
       } else {
         const name = searchName.trim();
@@ -337,9 +345,11 @@
                 </label>
                 <input
                   id="manual-instagram"
-                  type="url"
+                  type="text"
+                  inputmode="url"
+                  autocapitalize="none"
                   class="field"
-                  placeholder="https://instagram.com/…"
+                  placeholder="instagram.com/…"
                   bind:value={instagramUrl}
                   autocomplete="off"
                 />
@@ -350,9 +360,11 @@
                 </label>
                 <input
                   id="manual-website"
-                  type="url"
+                  type="text"
+                  inputmode="url"
+                  autocapitalize="none"
                   class="field"
-                  placeholder="https://…"
+                  placeholder="competitor.com"
                   bind:value={websiteUrl}
                   autocomplete="off"
                 />

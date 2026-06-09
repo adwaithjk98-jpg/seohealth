@@ -538,6 +538,20 @@ def _extract_website_url(driver: WebDriver) -> str | None:
     Returns the inner URL (Google redirect wrappers stripped, aggregator
     domains filtered) or None if the panel doesn't expose one we want to use.
     """
+    # The website row can render a beat after the rest of the panel. Without a
+    # wait, an immediate find_element intermittently misses a site that IS
+    # linked (you audit again and it shows up). Wait briefly for either anchor
+    # to appear first. TimeoutException subclasses WebDriverException, so a
+    # genuinely website-less listing just falls through to None.
+    try:
+        WebDriverWait(driver, 4).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "a[data-item-id='authority'], a[aria-label*='Website']")
+            )
+        )
+    except WebDriverException:
+        pass
+
     href: str | None = None
     for selector in ("a[data-item-id='authority']", "a[aria-label*='Website']"):
         try:
