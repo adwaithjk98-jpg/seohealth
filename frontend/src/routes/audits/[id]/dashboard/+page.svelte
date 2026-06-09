@@ -35,7 +35,12 @@
     }
   });
 
-  const sections = $derived(audit?.sections ?? []);
+  // Drop pillars the user opted out of (has_website/has_instagram = no) so
+  // they don't show as a stray 0/100 next to the overall — which excludes
+  // them. Matches the business-detail page's filter and the server's average.
+  const sections = $derived(
+    (audit?.sections ?? []).filter((/** @type {any} */ s) => s.enabled !== false)
+  );
   const top3 = $derived(topOpenRecommendations(sections, 3));
   const totalOpen = $derived(audit?.open_recommendations_count ?? 0);
   const totalDone = $derived(audit?.done_recommendations_count ?? 0);
