@@ -493,8 +493,7 @@
             </div>
           {:else if hasInstagram === false}
             <p class="pt-1 text-xs text-canvas-muted" in:fade={{ duration: 180 }}>
-              We'll skip the Instagram pillar too. The audit will focus on your Google Maps
-              listing.
+              We'll skip the Instagram pillar — it won't show or count toward your score.
             </p>
           {/if}
         </div>
