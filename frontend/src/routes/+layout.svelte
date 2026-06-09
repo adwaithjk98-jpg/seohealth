@@ -317,7 +317,14 @@
     {@render children()}
   </main>
 
-  <footer class="mx-auto max-w-5xl px-4 pb-10 pt-6 text-xs text-canvas-muted sm:px-6">
-    A calm dashboard for your business's online presence.
+  <footer
+    class="mx-auto flex max-w-5xl flex-col gap-2 px-4 pb-10 pt-6 text-xs text-canvas-muted sm:flex-row sm:items-center sm:justify-between sm:px-6"
+  >
+    <span>A calm dashboard for your business's online presence.</span>
+    <nav class="flex flex-wrap gap-x-4 gap-y-1">
+      <a class="hover:text-canvas-ink" href="/privacy">Privacy</a>
+      <a class="hover:text-canvas-ink" href="/terms">Terms</a>
+      <a class="hover:text-canvas-ink" href="/refund">Refund</a>
+    </nav>
   </footer>
 </div>

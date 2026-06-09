@@ -178,7 +178,7 @@ export async function logout() {
 
 // Routes the user can visit while signed out. Anything else bounces to
 // /login when authState is loaded and user is null.
-export const PUBLIC_ROUTES = ['/login', '/auth/verify'];
+export const PUBLIC_ROUTES = ['/login', '/auth/verify', '/privacy', '/terms', '/refund'];
 
 /** @param {string} pathname */
 export function isPublicRoute(pathname) {

@@ -22,6 +22,10 @@
 
   let ready = $state(false);
 
+  // TODO(launch): swap to a real domain support address (e.g. hello@yourdomain.in).
+  const supportEmail = 'hello@yourdomain.in';
+  const appVersion = '0.1.0';
+
   onMount(async () => {
     if (!authState.loaded) await loadCurrentUser();
     if (!authState.user) {
@@ -373,6 +377,48 @@
           </div>
         {/if}
       </div>
+    </div>
+
+    <!-- Legal & policies -->
+    <div class="card space-y-3 p-6 sm:p-8">
+      <p class="text-xs uppercase tracking-wide text-canvas-muted">Legal &amp; policies</p>
+      <div class="divide-y divide-canvas-soft">
+        <a
+          href="/privacy"
+          class="flex items-center justify-between py-3 text-sm text-canvas-ink hover:text-healthy-700"
+        >
+          Privacy Policy <span class="text-canvas-muted">→</span>
+        </a>
+        <a
+          href="/terms"
+          class="flex items-center justify-between py-3 text-sm text-canvas-ink hover:text-healthy-700"
+        >
+          Terms of Service <span class="text-canvas-muted">→</span>
+        </a>
+        <a
+          href="/refund"
+          class="flex items-center justify-between py-3 text-sm text-canvas-ink hover:text-healthy-700"
+        >
+          Refund Policy <span class="text-canvas-muted">→</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Support -->
+    <div class="card flex flex-wrap items-center justify-between gap-3 p-6 sm:p-8">
+      <div>
+        <p class="text-xs uppercase tracking-wide text-canvas-muted">Support</p>
+        <p class="mt-1 text-sm font-medium text-canvas-ink">Need a hand?</p>
+        <p class="text-xs text-canvas-muted">We read every message.</p>
+      </div>
+      <a class="btn-ghost" href={`mailto:${supportEmail}`}>Contact us</a>
+    </div>
+
+    <!-- About -->
+    <div class="card p-6 sm:p-8">
+      <p class="text-xs uppercase tracking-wide text-canvas-muted">About</p>
+      <p class="mt-1 text-sm text-canvas-ink">AuditHealth · v{appVersion}</p>
+      <p class="mt-1 text-xs text-canvas-muted">A calm dashboard for your business's online presence.</p>
     </div>
   {/if}
 </section>
