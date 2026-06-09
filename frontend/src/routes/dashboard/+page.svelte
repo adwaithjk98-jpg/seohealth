@@ -304,8 +304,8 @@
              Max tone is muted + ghost, deliberately quieter than Pro nudges. -->
         <UpgradeCallout
           tone="max"
-          title="Managing more than one place?"
-          body={`Pro covers one business. Max tracks up to ${MAX.businesses}, for multi-location owners and agencies.`}
+          title="Want more than Pro?"
+          body={`Max steps up to twice-weekly auto-audits & competitor refresh, ${MAX.competitors} competitors, and up to ${MAX.businesses} businesses.`}
           cta="See Max"
         />
       {/if}

@@ -171,7 +171,7 @@ export async function updateBusinessProfile(businessId, patch) {
  * Set or clear the auto-audit cadence on a business. ``cadence=null``
  * turns scheduling off. Returns the updated business row.
  * @param {number} businessId
- * @param {'weekly' | 'biweekly' | 'monthly' | null} cadence
+ * @param {'twice-weekly' | 'weekly' | 'biweekly' | 'monthly' | null} cadence
  */
 export async function setBusinessSchedule(businessId, cadence) {
   const res = await fetch(`/api/businesses/${businessId}/schedule`, {

@@ -74,7 +74,9 @@ class BusinessResponse(BaseModel):
 
 # Allowed cadence values are intentionally short — they show up in the
 # DB as plain strings and the UI maps them to friendly labels.
-ALLOWED_SCHEDULE_CADENCES = frozenset({"weekly", "biweekly", "monthly"})
+# "twice-weekly" is valid here (schema-level); whether a given user may pick it
+# is gated by tier in the schedule endpoint (Max-only).
+ALLOWED_SCHEDULE_CADENCES = frozenset({"twice-weekly", "weekly", "biweekly", "monthly"})
 
 
 class BusinessProfileUpdateRequest(BaseModel):

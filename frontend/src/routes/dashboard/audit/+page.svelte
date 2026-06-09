@@ -88,14 +88,17 @@
   /** @type {Record<number, string>} */
   let scheduleError = $state({});
 
-  const cadenceOptions = /** @type {const} */ ([
+  // Twice-weekly is a Max-only cadence (the backend rejects it for other tiers),
+  // so only offer it when the user is on Max.
+  const cadenceOptions = $derived([
     { value: null, label: 'Off' },
+    ...(tier === 'max' ? [{ value: 'twice-weekly', label: 'Twice a week' }] : []),
     { value: 'weekly', label: 'Weekly' },
     { value: 'biweekly', label: 'Bi-weekly' },
     { value: 'monthly', label: 'Monthly' }
   ]);
 
-  /** @param {any} biz @param {'weekly' | 'biweekly' | 'monthly' | null} next */
+  /** @param {any} biz @param {'twice-weekly' | 'weekly' | 'biweekly' | 'monthly' | null} next */
   async function handleSetCadence(biz, next) {
     if (!isPaid || scheduleSaving[biz.id]) return;
     if (biz.audit_schedule_cadence === next) return;
@@ -286,7 +289,13 @@
                     role="radio"
                     aria-checked={selected}
                     disabled={saving !== null}
-                    onclick={() => handleSetCadence(biz, opt.value)}
+                    onclick={() =>
+                      handleSetCadence(
+                        biz,
+                        /** @type {'twice-weekly' | 'weekly' | 'biweekly' | 'monthly' | null} */ (
+                          opt.value
+                        )
+                      )}
                     class={`min-h-[36px] rounded-xl border px-2 py-1.5 text-xs font-medium transition ${
                       selected
                         ? 'border-healthy-300 bg-healthy-50 text-healthy-700'

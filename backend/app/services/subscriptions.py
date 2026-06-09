@@ -72,10 +72,13 @@ TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
         "discovery_scans_per_month": 1,
     },
     UserPlan.max: {
-        # Max is the multi-location / agency tier (₹2,500/mo). Breadth, not
-        # depth: the same quality loop as Pro, applied across many businesses.
-        "businesses": 10,
-        "audits_per_week": 25,
+        # Max (₹2,500/mo) is the "power" tier: its headline is *faster, more*
+        # — twice-weekly auto-audits + twice-weekly competitor refresh (vs Pro's
+        # weekly), more competitors, higher quota. Multi-business (up to 5) is a
+        # listed perk, not the pitch. The twice-weekly cadence is gated in
+        # auto_audit.allowed_cadences; the refresh cadence in competitor_refresh.
+        "businesses": 5,
+        "audits_per_week": 20,
         "competitors": 8,
         "discovery_scans_per_month": 4,
     },

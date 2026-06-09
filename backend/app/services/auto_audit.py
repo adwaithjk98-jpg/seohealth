@@ -50,10 +50,21 @@ logger = logging.getLogger(__name__)
 
 # Cadence → interval in days. Add new values here when the UI gains them.
 _CADENCE_DAYS: dict[str, int] = {
+    # ~twice a week (every 3 days). Max-only — see allowed_cadences.
+    "twice-weekly": 3,
     "weekly": 7,
     "biweekly": 14,
     "monthly": 30,
 }
+
+# Which scheduling cadences a tier may pick. "twice-weekly" is a Max perk;
+# everyone else tops out at weekly. (Free can't schedule at all — gated
+# separately in the schedule endpoint.)
+def allowed_cadences(plan: UserPlan) -> frozenset[str]:
+    base = {"weekly", "biweekly", "monthly"}
+    if plan == UserPlan.max:
+        base = base | {"twice-weekly"}
+    return frozenset(base)
 
 
 def _now_naive() -> datetime:

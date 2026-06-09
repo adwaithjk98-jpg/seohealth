@@ -327,7 +327,7 @@
               <span
                 class="inline-flex items-center gap-1.5 rounded-full bg-attention-100 px-3 py-1 text-xs font-medium text-attention-700"
               >
-                Multi-location &amp; agencies
+                Twice-weekly updates
               </span>
             {/if}
 

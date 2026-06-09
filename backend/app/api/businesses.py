@@ -20,7 +20,7 @@ from app.schemas.business import (
 from app.services import subscriptions as subs_service
 from app.services.audit_summary import grade_from_score
 from app.services.audit_view import TREND_THRESHOLD
-from app.services.auto_audit import next_auto_audit_at
+from app.services.auto_audit import allowed_cadences, next_auto_audit_at
 from app.services.pillar_optout import enabled_pillars
 
 router = APIRouter()
@@ -353,6 +353,16 @@ def set_business_schedule(
             detail={
                 "code": "schedule_paid_only",
                 "message": "Scheduled audits are a paid-tier feature. Upgrade to enable a schedule.",
+                "tier": user.plan.value,
+            },
+        )
+    # Twice-weekly is a Max perk. Pro tops out at weekly.
+    if payload.cadence is not None and payload.cadence not in allowed_cadences(user.plan):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "cadence_not_allowed",
+                "message": "Twice-weekly auto-audits are a Max feature. Upgrade to Max for it.",
                 "tier": user.plan.value,
             },
         )

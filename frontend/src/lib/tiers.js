@@ -60,16 +60,16 @@ export const TIERS = {
     price: '₹2,500/mo',
     amount: '₹2,500',
     cadence: '/month',
-    tagline: 'Breadth for multi-location owners and agencies.',
+    tagline: 'For power users who want more — faster updates, more competitors, higher limits.',
     features: [
       'Everything in Pro',
-      'Up to 10 businesses',
+      'Twice-weekly auto-audits & competitor refresh',
       '8 competitors tracked',
       '4 discovery scans / month',
-      'Per-business weekly digest'
+      'Track up to 5 businesses'
     ],
-    businesses: 10,
-    auditsPerWeek: 25,
+    businesses: 5,
+    auditsPerWeek: 20,
     competitors: 8,
     discoveryScansPerMonth: 4
   }
