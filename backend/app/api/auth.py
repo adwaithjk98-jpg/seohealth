@@ -11,7 +11,7 @@ from app.schemas.subscription import (
     TierLimits,
 )
 
-from app.auth_deps import current_user
+from app.auth_deps import current_user, is_admin
 from app.config import settings
 from app.db import get_db
 from app.models import User
@@ -53,6 +53,9 @@ class MeResponse(BaseModel):
     display_name: str | None = None
     # Whether the weekly digest email is on for this user (account-page toggle).
     weekly_digest_enabled: bool = True
+    # Founder/admin flag — lets the SPA show the admin stats link only to admins.
+    # The /api/admin/* endpoints enforce this server-side too.
+    is_admin: bool = False
     # Phase 3 — subscription tier + hard caps + most-recent subscription row,
     # so the SPA can render Billing state and gate "Add business" without a
     # second round-trip.
@@ -94,6 +97,7 @@ def _build_me_response(db: DbSession, user: User) -> "MeResponse":
         plan=user.plan.value,
         display_name=user.display_name,
         weekly_digest_enabled=user.weekly_digest_enabled,
+        is_admin=is_admin(user),
         subscription_state=state,
     )
 

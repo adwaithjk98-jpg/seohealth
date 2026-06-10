@@ -292,6 +292,12 @@ export async function startSubscriptionCheckout(planTier = 'paid') {
   return res.json();
 }
 
+export async function getAdminStats() {
+  const res = await fetch('/api/admin/stats', { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
 export async function cancelSubscription() {
   const res = await fetch('/api/subscriptions/cancel', {
     method: 'POST',

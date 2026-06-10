@@ -60,6 +60,7 @@
     authState.user?.subscription_state?.tier ?? authState.user?.plan ?? 'free'
   );
   const isFree = $derived(tier === 'free');
+  const isAdmin = $derived(authState.user?.is_admin === true);
 
   $effect(() => {
     // Seed the input whenever the menu opens or the signed-in user changes.
@@ -187,6 +188,9 @@
               Upgrade to Pro
             </a>
           {/if}
+          {#if isAdmin}
+            <a class="btn-ghost hidden sm:inline-flex" href="/admin">Stats</a>
+          {/if}
           <a class="btn-ghost hidden sm:inline-flex" href="/account">Account</a>
           <a class="btn-ghost hidden sm:inline-flex" href="/billing">Billing</a>
           <span class="hidden text-xs text-canvas-muted sm:inline" title={authState.user.email}>
@@ -269,6 +273,15 @@
                     role="menuitem"
                   >
                     Upgrade to Pro
+                  </a>
+                {/if}
+                {#if isAdmin}
+                  <a
+                    href="/admin"
+                    class="btn-ghost mt-2 w-full justify-start"
+                    role="menuitem"
+                  >
+                    Stats
                   </a>
                 {/if}
                 <a

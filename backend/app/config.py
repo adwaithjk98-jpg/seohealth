@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     # request) doesn't benefit from a larger model.
     anthropic_insights_model: str = "claude-haiku-4-5-20251001"
 
+    # Founder/admin access. Comma-separated emails that may view /api/admin/*
+    # (the founder stats panel). Override in prod via env.
+    admin_emails: str = "adwaithjk98@gmail.com"
+
     # Sentry error monitoring. No-op when empty (dev default). Set the DSN in
     # prod to start capturing exceptions. ``sentry_traces_sample_rate`` controls
     # performance tracing volume — 0 keeps it error-only (free-tier friendly).

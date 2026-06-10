@@ -42,3 +42,17 @@ def current_user(
         )
     auth_service.touch_session(db, db_session)
     return user
+
+
+def is_admin(user: User) -> bool:
+    """True iff the user's email is in the configured admin allowlist."""
+    admins = {e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()}
+    return bool(admins) and user.email.strip().lower() in admins
+
+
+def admin_user(user: User = Depends(current_user)) -> User:
+    """Like current_user, but only for admins. Returns **404** (not 403) to
+    non-admins so the admin surface isn't even discoverable."""
+    if not is_admin(user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    return user

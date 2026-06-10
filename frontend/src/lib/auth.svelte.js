@@ -40,6 +40,7 @@ import { goto } from '$app/navigation';
  * @property {string} plan
  * @property {string | null} display_name
  * @property {boolean} weekly_digest_enabled
+ * @property {boolean} [is_admin]
  * @property {SubscriptionState | null} subscription_state
  */
 

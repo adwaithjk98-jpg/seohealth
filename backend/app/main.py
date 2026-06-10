@@ -5,6 +5,7 @@ from slowapi import _rate_limit_exceeded_handler
 
 from app.config import settings
 from app.ratelimit import limiter
+from app.api.admin import router as admin_router
 from app.api.audits import router as audits_router
 from app.api.auth import router as auth_router
 from app.api.businesses import router as businesses_router
@@ -31,6 +32,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(health_router, prefix="/api", tags=["health"])
+app.include_router(admin_router, prefix="/api", tags=["admin"])
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(businesses_router, prefix="/api", tags=["businesses"])
 app.include_router(competitors_router, prefix="/api", tags=["competitors"])
