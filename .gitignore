@@ -15,3 +15,17 @@
 
 # Playwright-MCP browser logs (local tooling artifacts).
 .playwright-mcp/
+
+# Internal planning / cost / build-prompt docs — kept LOCAL, never published.
+# (Root-level markdown only; README.md is the one public doc. Subdir docs and
+# the screenshot folders are unaffected.)
+/*.md
+/.*.md
+!/README.md
+/claude_prompts/
+
+# Stray root-level screenshot / test PNGs — kept local (screenshot folders OK).
+/*.png
+
+# Local Claude config / memory — never published.
+.claude/
