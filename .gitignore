@@ -29,3 +29,13 @@
 
 # Local Claude config / memory — never published.
 .claude/
+
+# Stale screenshot dumps — superseded by screenshots/ (kept local).
+/audit_walkthrough_screenshots/
+/walkthrough_2026-05-27_mobile/
+/competitor_corrections_screens/
+/competitor_final_polish_screens/
+/competitor_mobile_screens/
+/competitor_polish_screens/
+/competitor_recon_screenshots/
+/misc_ui_screenshots/

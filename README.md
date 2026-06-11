@@ -10,7 +10,7 @@ next*.
 > tracking, subscriptions, PWA + push) is built and running; production deploy
 > and live billing are in progress.
 
-![Dashboard](audit_walkthrough_screenshots/07_layer1_dashboard.png)
+![SEO Health dashboard](screenshots/dashboard.png)
 
 ---
 
@@ -26,9 +26,9 @@ multi-pillar audit and presents it as a calm, three-layer workspace:
 - **Layer 3 — the finding:** each issue opens to a specific, do-this-next
   recommendation with estimated impact and effort.
 
-| Live audit (streamed) | Pillar detail | Mobile |
+| The full check, top to bottom | A pillar, up close | On mobile |
 |---|---|---|
-| ![Live audit](audit_walkthrough_screenshots/12_reaudit_streaming.png) | ![Maps pillar](audit_walkthrough_screenshots/08_layer2_maps.png) | ![Mobile](audit_walkthrough_screenshots/m04_layer1_mobile.png) |
+| ![Full dashboard](screenshots/dashboard-full.png) | ![Maps pillar](screenshots/pillar.png) | ![Mobile](screenshots/mobile.png) |
 
 ## Features
 
