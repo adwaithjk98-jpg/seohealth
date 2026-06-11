@@ -323,6 +323,36 @@ export async function deleteMyAccount() {
   return true;
 }
 
+// --- Web Push ---------------------------------------------------------------
+
+export async function getVapidPublicKey() {
+  const res = await fetch('/api/push/vapid-public-key', { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json(); // { public_key: string }
+}
+
+/** @param {{ endpoint: string, keys: { p256dh: string, auth: string } }} subscription */
+export async function subscribePush(subscription) {
+  const res = await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(subscription)
+  });
+  if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
+}
+
+/** @param {string} endpoint */
+export async function unsubscribePush(endpoint) {
+  const res = await fetch('/api/push/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ endpoint })
+  });
+  if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
+}
+
 // Razorpay Checkout JS is only needed when real keys are configured. Load it
 // on demand so dev/mock flows never pay the third-party request cost.
 let _razorpayScriptPromise = null;

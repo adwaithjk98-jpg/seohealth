@@ -12,6 +12,7 @@ from app.api.businesses import router as businesses_router
 from app.api.competitors import router as competitors_router
 from app.api.discovery_scan import router as discovery_scan_router
 from app.api.health import router as health_router
+from app.api.push import router as push_router
 from app.api.recommendations import router as recommendations_router
 from app.api.subscriptions import router as subscriptions_router
 
@@ -40,3 +41,4 @@ app.include_router(audits_router, prefix="/api", tags=["audits"])
 app.include_router(recommendations_router, prefix="/api", tags=["recommendations"])
 app.include_router(subscriptions_router, prefix="/api", tags=["subscriptions"])
 app.include_router(discovery_scan_router, prefix="/api", tags=["discovery-scans"])
+app.include_router(push_router, prefix="/api", tags=["push"])

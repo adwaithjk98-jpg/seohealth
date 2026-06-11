@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from app.db import SessionLocal
 from app.models import Business, Competitor, CompetitorObservation, DiscoveryScan
 from app.models.enums import DiscoveryScanStatus
+from app.services import push_service
 from app.services.competitor_cache import normalize_maps_url, upsert_metric_cache
 from app.services.competitor_scraper_adapter import (
     CompetitorScraperError,
@@ -37,6 +38,11 @@ from scrapers.maps import CompetitorScrapeTarget
 from scrapers.types import BusinessInput
 
 logger = logging.getLogger(__name__)
+
+# A tracked competitor gaining at least this many Google reviews since our last
+# observation is worth a "they're pulling ahead" push to the owner. Mirrors the
+# score-change email's threshold philosophy: only notify on a real move.
+COMPETITOR_REVIEW_NOTIFY_DELTA = 3
 
 
 def _ig_handle_from_url(url: str | None) -> str | None:
@@ -153,6 +159,9 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         obs_written = 0
+        # (business_id, competitor_name, review_delta) to push *after* commit —
+        # we don't want to hold the txn open across the push HTTP calls.
+        pending_pushes: list[tuple[int, str | None, int]] = []
         for comp in matching:
             # Self-heal: competitors tracked before the discovery
             # scraper started returning IG/website fields (or added
@@ -168,6 +177,18 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
             ig_followers, ig_posts = asyncio.run(
                 _ig_metrics_for_url(comp.instagram_url)
             )
+            # Snapshot the prior review count *before* writing the new point so
+            # we can detect a meaningful jump and nudge the owner.
+            prev_reviews = (
+                db.query(CompetitorObservation.review_count)
+                .filter(CompetitorObservation.competitor_id == comp.id)
+                .order_by(
+                    CompetitorObservation.observed_at.desc(),
+                    CompetitorObservation.id.desc(),
+                )
+                .limit(1)
+                .scalar()
+            )
             db.add(
                 CompetitorObservation(
                     competitor_id=comp.id,
@@ -180,7 +201,38 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
                 )
             )
             obs_written += 1
+            if (
+                prev_reviews is not None
+                and metric.review_count is not None
+                and metric.review_count - prev_reviews >= COMPETITOR_REVIEW_NOTIFY_DELTA
+            ):
+                pending_pushes.append(
+                    (comp.business_id, comp.name, metric.review_count - prev_reviews)
+                )
         db.commit()
+
+        # Best-effort competitor-moved pushes (after commit so the txn isn't
+        # held open across HTTP). No-op in dev / when VAPID is unset.
+        for business_id, comp_name, delta in pending_pushes:
+            business = db.get(Business, business_id)
+            if business is None:
+                continue
+            try:
+                push_service.send_to_user(
+                    db,
+                    business.user_id,
+                    title=f"{comp_name or 'A competitor'} is pulling ahead 👀",
+                    body=(
+                        f"They just picked up {delta} new reviews. "
+                        "See how you stack up."
+                    ),
+                    url=f"/businesses/{business_id}",
+                )
+            except Exception:
+                logger.exception(
+                    "competitor-moved push failed for business_id=%s", business_id
+                )
+
         return {
             "cache_key": cache_key,
             "rating": metric.rating,

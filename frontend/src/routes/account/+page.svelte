@@ -19,6 +19,7 @@
     deleteMyAccount
   } from '$lib/api.js';
   import { reduced } from '$lib/motion.js';
+  import { getPushState, enablePush, disablePush, isPushSupported } from '$lib/push.js';
 
   let ready = $state(false);
 
@@ -33,6 +34,15 @@
       return;
     }
     ready = true;
+
+    // Push state is device-local — reflect this browser's subscription. Hidden
+    // until the backend has a VAPID key (st.available), so no broken toggle.
+    if (isPushSupported()) {
+      const st = await getPushState();
+      pushSupported = st.supported;
+      pushAvailable = st.available;
+      pushSubscribed = st.subscribed;
+    }
   });
 
   const user = $derived(authState.user);
@@ -66,6 +76,37 @@
       await updateCurrentUser({ weekly_digest_enabled: !user?.weekly_digest_enabled });
     } finally {
       digestSaving = false;
+    }
+  }
+
+  // --- Push notifications (this device) ---
+  let pushSupported = $state(false);
+  let pushAvailable = $state(false);
+  let pushSubscribed = $state(false);
+  let pushBusy = $state(false);
+  let pushError = $state(/** @type {string | null} */ (null));
+
+  async function togglePush() {
+    if (pushBusy) return;
+    pushBusy = true;
+    pushError = null;
+    try {
+      if (pushSubscribed) {
+        await disablePush();
+        pushSubscribed = false;
+      } else {
+        pushSubscribed = await enablePush();
+        if (!pushSubscribed) pushError = 'Push isn’t available right now.';
+      }
+    } catch (err) {
+      pushError =
+        err && /** @type {any} */ (err).code === 'denied'
+          ? 'Notifications are blocked. Enable them in your browser settings, then try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Could not update notifications.';
+    } finally {
+      pushBusy = false;
     }
   }
 
@@ -272,31 +313,68 @@
 
     <!-- Notifications (paid tiers only — the digest is a paid feature) -->
     {#if !isFree}
-      <div class="card flex flex-wrap items-center justify-between gap-3 p-6 sm:p-8">
-        <div>
-          <p class="text-xs uppercase tracking-wide text-canvas-muted">Notifications</p>
-          <p class="mt-1 text-sm font-medium text-canvas-ink">Weekly digest email</p>
-          <p class="text-xs text-canvas-muted">
-            A Monday summary of what changed across your businesses.
-          </p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-label="Weekly digest email"
-          aria-checked={user?.weekly_digest_enabled ? 'true' : 'false'}
-          onclick={toggleDigest}
-          disabled={digestSaving}
-          class={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-            user?.weekly_digest_enabled ? 'bg-healthy-500' : 'bg-canvas-soft'
-          }`}
-        >
-          <span
-            class={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
-              user?.weekly_digest_enabled ? 'translate-x-6' : 'translate-x-1'
+      <div class="card space-y-4 p-6 sm:p-8">
+        <p class="text-xs uppercase tracking-wide text-canvas-muted">Notifications</p>
+
+        <!-- Weekly digest email -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-medium text-canvas-ink">Weekly digest email</p>
+            <p class="text-xs text-canvas-muted">
+              A Monday summary of what changed across your businesses.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-label="Weekly digest email"
+            aria-checked={user?.weekly_digest_enabled ? 'true' : 'false'}
+            onclick={toggleDigest}
+            disabled={digestSaving}
+            class={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+              user?.weekly_digest_enabled ? 'bg-healthy-500' : 'bg-canvas-soft'
             }`}
-          ></span>
-        </button>
+          >
+            <span
+              class={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                user?.weekly_digest_enabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            ></span>
+          </button>
+        </div>
+
+        {#if pushSupported && pushAvailable}
+          <hr class="border-canvas-soft" />
+          <!-- Push notifications (this device) -->
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p class="text-sm font-medium text-canvas-ink">Push notifications</p>
+              <p class="text-xs text-canvas-muted">
+                A nudge on this device when a scheduled audit lands or a competitor moves.
+              </p>
+              {#if pushError}
+                <p class="mt-1 text-xs text-action-700">{pushError}</p>
+              {/if}
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label="Push notifications"
+              aria-checked={pushSubscribed ? 'true' : 'false'}
+              onclick={togglePush}
+              disabled={pushBusy}
+              class={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                pushSubscribed ? 'bg-healthy-500' : 'bg-canvas-soft'
+              }`}
+            >
+              <span
+                class={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                  pushSubscribed ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              ></span>
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
 

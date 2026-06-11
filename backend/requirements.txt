@@ -27,3 +27,8 @@ anthropic==0.42.0
 # HTTP rate limiting + error monitoring (added 2026-06-08)
 slowapi==0.1.9
 sentry-sdk[fastapi]==2.20.0
+
+# Web Push (VAPID) — scheduled-audit-done + competitor-moved notifications.
+# Sending is gated on VAPID_* config, so the runtime tolerates this being
+# unconfigured; pulls in ``cryptography`` (used by scripts/gen_vapid_keys.py).
+pywebpush==2.0.0

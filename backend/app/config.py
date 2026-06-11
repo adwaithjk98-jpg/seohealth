@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     from_email: str = "Local SEO Health Monitor <onboarding@resend.dev>"
 
+    # Web Push (VAPID). When the keypair is unset (dev default), push sending is
+    # a no-op — same "empty = disabled" convention as Resend/Sentry. Generate a
+    # pair with ``python scripts/gen_vapid_keys.py`` and set both in prod; the
+    # public key is also served to the frontend as the applicationServerKey.
+    # ``vapid_subject`` is the ``mailto:`` contact the push services require in
+    # the VAPID claims.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:hello@yourdomain.in"
+
     # Razorpay — subscription billing (Test Mode for Phase 3).
     # When ``razorpay_key_id`` is empty, the checkout endpoint falls back to a
     # local mock flow that activates the subscription without an external HTTP

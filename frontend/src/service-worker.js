@@ -82,3 +82,40 @@ async function respond(request, url) {
     throw err;
   }
 }
+
+// --- Web Push --------------------------------------------------------------
+// Notifications fired by the backend (scheduled-audit-done, competitor-moved).
+// Payload shape: { title, body, url }.
+
+sw.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = data.title || 'SEO Health';
+  const options = {
+    body: data.body || '',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    data: { url: data.url || '/dashboard' },
+    // Coalesce a burst targeting the same place into one notification.
+    tag: data.url || 'seo-health'
+  };
+  event.waitUntil(sw.registration.showNotification(title, options));
+});
+
+sw.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || '/dashboard';
+  event.waitUntil(
+    sw.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      // Focus an existing tab already on the target; otherwise open a new one.
+      for (const client of clients) {
+        if (client.url.includes(target) && 'focus' in client) return client.focus();
+      }
+      return sw.clients.openWindow(target);
+    })
+  );
+});

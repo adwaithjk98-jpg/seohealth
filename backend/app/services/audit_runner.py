@@ -20,10 +20,11 @@ from app.models.enums import (
     AuditSectionName,
     AuditSectionStatus,
     AuditStatus,
+    AuditTrigger,
     RecommendationFixStatus,
     RecommendationSeverity,
 )
-from app.services import audit_events
+from app.services import audit_events, push_service
 from app.services.email_service import (
     SCORE_CHANGE_NOTIFY_THRESHOLD,
     send_score_change_email,
@@ -218,6 +219,40 @@ def _maybe_notify_score_change(
         logger.exception(
             "score-change email failed for audit_id=%s business_id=%s",
             current_audit_id,
+            business.id,
+        )
+
+
+def _maybe_push_scheduled_audit_done(
+    db: Session,
+    business: Business,
+    audit: Audit,
+    overall: int,
+) -> None:
+    """Web-push the owner when a *scheduled* audit finishes.
+
+    Only scheduled runs notify — a user who kicked off a manual audit is
+    already watching the live feed, so a push would be redundant noise. The
+    audit is already committed ``done`` by the time we get here, so a flaky
+    push service can't affect the run; errors are logged and swallowed.
+    """
+    if audit.trigger != AuditTrigger.scheduled:
+        return
+    try:
+        push_service.send_to_user(
+            db,
+            business.user_id,
+            title="Your audit's in ✨",
+            body=(
+                f"{business.name} just had its scheduled check-up — you're at "
+                f"{overall}/100. Tap to see what moved."
+            ),
+            url=f"/businesses/{business.id}",
+        )
+    except Exception:
+        logger.exception(
+            "scheduled-audit push failed for audit_id=%s business_id=%s",
+            audit.id,
             business.id,
         )
 
@@ -534,6 +569,10 @@ async def run_audit(audit_id: int) -> None:
         # is marked ``done`` so the email's dashboard link points at a fully
         # persisted audit. Swallows its own errors.
         _maybe_notify_score_change(db, business, audit_id, overall)
+
+        # Web-push the owner when a *scheduled* audit completes (manual runs are
+        # already on-screen in the live feed). Best-effort, like the email above.
+        _maybe_push_scheduled_audit_done(db, business, audit, overall)
 
         # Opportunistic storage pruning — NULLs heavy raw_data_json payloads
         # on audits older than the retention window so Postgres doesn't
