@@ -41,7 +41,25 @@ x-backend-env: &backend-env
   RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
   RAZORPAY_PAID_PLAN_ID: ${RAZORPAY_PAID_PLAN_ID:-}
   RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
-  PAID_PLAN_PRICE_LABEL: ${PAID_PLAN_PRICE_LABEL:-₹399 / month}
+  PAID_PLAN_PRICE_LABEL: ${PAID_PLAN_PRICE_LABEL:-₹549 / month}
+  RAZORPAY_MAX_PLAN_ID: ${RAZORPAY_MAX_PLAN_ID:-}
+  MAX_PLAN_PRICE_LABEL: ${MAX_PLAN_PRICE_LABEL:-₹2,500 / month}
+  # Founder/admin allowlist for /api/admin/* (the stats panel).
+  ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+  # Web Push (VAPID). Empty ⇒ push sending is a no-op (dev/smoke-test default).
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:hello@seohealth.in}
+  # Sentry error monitoring. Empty ⇒ no-op.
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+  # Competitor-insights LLM phrasing (deterministic fallback when empty).
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_INSIGHTS_MODEL: ${ANTHROPIC_INSIGHTS_MODEL:-claude-haiku-4-5-20251001}
+  # HTTP rate limiting (slowapi).
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_REQUEST_LINK: ${RATE_LIMIT_REQUEST_LINK:-5/minute}
+  RATE_LIMIT_CREATE: ${RATE_LIMIT_CREATE:-30/minute}
 
 services:
   postgres:
@@ -111,6 +129,37 @@ services:
         condition: service_healthy
     # Worker is where Chromium actually runs — this is the load-bearing copy.
     shm_size: "1gb"
+    networks:
+      - audithealth-net
+
+  competitor-worker:
+    # Low-priority queue: competitor cache refreshes + Discovery Scans. Reuses
+    # the api image (single build). Runs Chromium for competitor scrapes, so it
+    # needs the same 1GB /dev/shm as the audit worker.
+    image: audithealth-backend:dev
+    command: ["python", "-m", "scripts.run_competitor_worker"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    shm_size: "1gb"
+    networks:
+      - audithealth-net
+
+  scheduler:
+    # rq-scheduler: enqueues auto-audits, the weekly digest, competitor
+    # refreshes, and data pruning on cron. No Chromium here — it only enqueues
+    # jobs the workers run, so no /dev/shm bump needed.
+    image: audithealth-backend:dev
+    command: ["python", "-m", "scripts.run_scheduler"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - audithealth-net
 

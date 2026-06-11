@@ -1,0 +1,23 @@
+# Caddy reverse proxy — terminates TLS (automatic Let's Encrypt) and forwards
+# to the internal Nginx frontend container, which serves the SPA and proxies
+# /api to the API. Caddy provisions + renews the certificate automatically once:
+#   - seohealth.in's DNS A record points at this server, and
+#   - ports 80 and 443 are open to the internet.
+#
+# Used only with the caddy compose override (see docker-compose.caddy.yml).
+
+{
+	# Let's Encrypt account email (expiry/issue notices). Change if you prefer.
+	email hello@seohealth.in
+}
+
+seohealth.in {
+	encode zstd gzip
+	reverse_proxy frontend:80
+}
+
+# To also serve www, add a `www.seohealth.in` DNS A record pointing here, then
+# uncomment:
+# www.seohealth.in {
+# 	redir https://seohealth.in{uri} permanent
+# }

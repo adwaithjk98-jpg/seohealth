@@ -1,0 +1,44 @@
+# Caddy override — adds HTTPS / automatic SSL in front of the stack. Invoke with
+# all three files (order matters — caddy override last):
+#
+#   docker compose --env-file .env.prod \
+#     -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.caddy.yml \
+#     up -d --build
+#
+# Caddy owns :80 and :443 on the host and reverse-proxies to the internal Nginx
+# frontend (`frontend:80` on the compose network). The frontend's own :80 host
+# publish is reset so it stays internal — otherwise both would fight over host
+# port 80. Caddy gets + renews the Let's Encrypt cert for seohealth.in
+# automatically once DNS points here and 80/443 are reachable.
+#
+# Requires Docker Compose v2.24+ for the `!reset` tag.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+    networks:
+      - audithealth-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    # Caddy is the host entrypoint now — keep Nginx internal-only (no host port).
+    ports: !reset []
+
+volumes:
+  caddy_data:
+  caddy_config:

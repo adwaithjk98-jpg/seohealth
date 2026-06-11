@@ -74,6 +74,24 @@ services:
       FROM_EMAIL: ${FROM_EMAIL:?FROM_EMAIL must be set for prod}
     logging: *default-logging
 
+  competitor-worker:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://audithealth:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for prod}@postgres:5432/audithealth
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL must be set for prod}
+      RESEND_API_KEY: ${RESEND_API_KEY?RESEND_API_KEY must be defined in host env (empty allowed for localhost smoke test)}
+      FROM_EMAIL: ${FROM_EMAIL:?FROM_EMAIL must be set for prod}
+    logging: *default-logging
+
+  scheduler:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://audithealth:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for prod}@postgres:5432/audithealth
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL must be set for prod}
+      RESEND_API_KEY: ${RESEND_API_KEY?RESEND_API_KEY must be defined in host env (empty allowed for localhost smoke test)}
+      FROM_EMAIL: ${FROM_EMAIL:?FROM_EMAIL must be set for prod}
+    logging: *default-logging
+
   frontend:
     restart: unless-stopped
     logging: *default-logging
