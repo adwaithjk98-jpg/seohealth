@@ -50,6 +50,22 @@ export const SECTION_PHASES = {
       return parts.length ? parts.join(' · ') : null;
     }
   },
+  performance: {
+    section: 'performance',
+    emoji: '⚡',
+    label: 'Site speed',
+    runningCopy: 'Measuring how fast your site loads…',
+    completedCopy: 'Measured',
+    summarize: (data) => {
+      if (!data) return null;
+      const { performance_score, lcp_display } = data;
+      if (performance_score != null && lcp_display) {
+        return `${performance_score}/100 · loads in ${lcp_display}`;
+      }
+      if (performance_score != null) return `${performance_score}/100 on mobile`;
+      return null;
+    }
+  },
   nap: {
     section: 'nap',
     emoji: '📋',
@@ -99,6 +115,15 @@ export function progressCopy(section, step, detail) {
   if (section === 'website') {
     if (step === 'fetching') return 'Fetching your homepage…';
     if (step === 'parsing') return 'Reading the page…';
+  }
+  if (section === 'performance') {
+    if (step === 'measuring') return 'Running a real load test on your site…';
+    if (step === 'measured') {
+      if (detail?.performance_score != null) {
+        return `Speed measured — ${detail.performance_score}/100 on mobile.`;
+      }
+      return 'Speed measured.';
+    }
   }
   return null;
 }

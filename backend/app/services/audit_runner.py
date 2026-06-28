@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -36,6 +37,7 @@ from scrapers import (
     audit_instagram,
     audit_maps,
     audit_nap,
+    audit_pagespeed,
     audit_website,
 )
 from scrapers.types import BusinessInput, SectionResult
@@ -52,6 +54,10 @@ ScraperFn = Callable[[BusinessInput], Awaitable[SectionResult]]
 PIPELINE: list[tuple[AuditSectionName, ScraperFn]] = [
     (AuditSectionName.maps, audit_maps),
     (AuditSectionName.website, audit_website),
+    # Performance runs right after website: it needs the same website URL
+    # (incl. one Maps may have just discovered) and reads naturally in the
+    # live feed as "checked your site → measured how fast it loads".
+    (AuditSectionName.performance, audit_pagespeed),
     (AuditSectionName.instagram, audit_instagram),
     (AuditSectionName.nap, audit_nap),
 ]
@@ -238,15 +244,34 @@ def _maybe_push_scheduled_audit_done(
     """
     if audit.trigger != AuditTrigger.scheduled:
         return
+    # A little variety so the weekly nudge doesn't read like the same robot
+    # every time. Each variant is a (title, body) pair — all warm, and all
+    # point the owner at *what changed* rather than just announcing "done"
+    # (a teaser for the recap, not a dead notification).
+    name = business.name
+    variants = [
+        (
+            "Your check-up's in ✨",
+            f"{name} is at {overall}/100 this week. Tap to see what moved.",
+        ),
+        (
+            "Fresh audit, fresh read 🌿",
+            f"We just re-checked {name} — you're sitting at {overall}/100. "
+            "Here's what changed.",
+        ),
+        (
+            "This week's read is ready 📊",
+            f"{name}'s scheduled check-up is done ({overall}/100). "
+            "See the one thing worth a few minutes.",
+        ),
+    ]
+    title, body = random.choice(variants)
     try:
         push_service.send_to_user(
             db,
             business.user_id,
-            title="Your audit's in ✨",
-            body=(
-                f"{business.name} just had its scheduled check-up — you're at "
-                f"{overall}/100. Tap to see what moved."
-            ),
+            title=title,
+            body=body,
             url=f"/businesses/{business.id}",
         )
     except Exception:

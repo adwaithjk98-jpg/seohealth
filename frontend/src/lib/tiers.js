@@ -30,9 +30,9 @@ export const TIERS = {
     amount: '₹0',
     cadence: 'free forever',
     tagline: 'See exactly where your business stands online.',
-    features: ['1 business', 'Monthly health check', 'Plain-English recommendations'],
+    features: ['1 business', 'Up to 2 audits a week', 'Plain-English recommendations'],
     businesses: 1,
-    auditsPerWeek: 1,
+    auditsPerWeek: 2,
     competitors: 0,
     discoveryScansPerMonth: 0
   },
@@ -57,16 +57,16 @@ export const TIERS = {
   max: {
     key: 'max',
     name: 'Max',
-    price: '₹2,500/mo',
-    amount: '₹2,500',
+    price: '₹1,999/mo',
+    amount: '₹1,999',
     cadence: '/month',
-    tagline: 'For power users who want more — faster updates, more competitors, higher limits.',
+    tagline: 'Everything in Pro, turned up — deeper insight, faster audits, more eyes on the competition. Built to scale with you.',
     features: [
-      'Everything in Pro',
-      'Twice-weekly auto-audits & competitor refresh',
-      '8 competitors tracked',
+      'Everything in Pro, supercharged',
+      'Audits & competitor refresh twice as often',
+      '8 competitors tracked per business',
       '4 discovery scans / month',
-      'Track up to 5 businesses'
+      'Run up to 5 businesses or locations'
     ],
     businesses: 5,
     auditsPerWeek: 20,
@@ -81,5 +81,5 @@ export const TIER_ORDER = /** @type {const} */ (['free', 'paid', 'max']);
 /** Pro tier — the Free → Pro growth target. */
 export const PRO = TIERS.paid;
 
-/** Max tier — multi-location / agency. Only surfaced at a hit capacity limit. */
+/** Max tier — the Pro power-up (also fits multi-location). Surfaced at a hit capacity limit. */
 export const MAX = TIERS.max;

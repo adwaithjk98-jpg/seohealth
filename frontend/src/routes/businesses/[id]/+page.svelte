@@ -25,6 +25,7 @@
   import Skeleton from '$lib/components/Skeleton.svelte';
   import BusinessProfileBanner from '$lib/components/BusinessProfileBanner.svelte';
   import SinceLastCheckStrip from '$lib/components/SinceLastCheckStrip.svelte';
+  import AuditDoneBanner from '$lib/components/AuditDoneBanner.svelte';
 
   // /businesses/{id} is the canonical, audit-id-independent dashboard URL
   // (m6/s5). Bookmarks here survive every re-audit — they always resolve
@@ -303,6 +304,16 @@
   <section class="space-y-10">
     <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back to your businesses</a>
 
+    {#if audit.audit_id}
+      <AuditDoneBanner
+        auditId={audit.audit_id}
+        businessId={businessId}
+        finishedAt={audit.finished_at}
+        newCount={audit.since_last_check?.new?.length ?? 0}
+        href="/dashboard/insights"
+      />
+    {/if}
+
     {#if business}
       <BusinessProfileBanner
         {business}
@@ -431,7 +442,7 @@
       <div>
         <p class="text-sm font-medium text-canvas-ink">Want a fresh check?</p>
         <p class="text-xs text-canvas-muted">
-          We'll re-run all four pillars and carry your "done" check-marks forward.
+          We'll re-run every pillar and carry your "done" check-marks forward.
         </p>
         {#if reauditError}
           <p

@@ -8,6 +8,7 @@
   import { trendArrow, trendTone, scoreTone, formatRelativeTime } from '$lib/dashboard.js';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import UpgradeCallout from '$lib/components/UpgradeCallout.svelte';
+  import WeeklyInsightsButton from '$lib/components/WeeklyInsightsButton.svelte';
   import { MAX } from '$lib/tiers.js';
 
   /** @type {{ data: { businesses: any[] | null, error: string | null } }} */
@@ -145,6 +146,10 @@
       <a class="btn-primary w-full sm:w-auto" href="/">Add a business</a>
     </div>
   {:else}
+    <div>
+      <WeeklyInsightsButton {businesses} />
+    </div>
+
     <a
       href="/dashboard/insights"
       data-sveltekit-preload-data="tap"

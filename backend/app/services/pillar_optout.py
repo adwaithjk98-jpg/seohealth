@@ -17,6 +17,13 @@ Rules:
   enabled — otherwise there's no second source to cross-check Maps
   against, and surfacing a NAP pillar with nothing to compare just
   produces an honest-but-empty 0/100.
+* ``performance`` (site speed / Core Web Vitals) is enabled iff
+  ``website`` is — it measures the website, so a business that opted
+  out of the website pillar has nothing to measure. The gate is the
+  *stable* ``has_website`` flag (not the URL itself) so the enabled set
+  doesn't flip between the runner's start and the read path if Maps
+  discovers the URL mid-audit; the scraper raises (→ excluded section)
+  when the URL is genuinely absent.
 """
 
 from __future__ import annotations
@@ -36,6 +43,8 @@ def enabled_pillars(business: Business) -> frozenset[str]:
 
     if business.has_website is not False:
         enabled.add("website")
+        # Site speed measures the website, so it rides on the website opt-in.
+        enabled.add("performance")
     if business.has_instagram is not False:
         enabled.add("instagram")
 

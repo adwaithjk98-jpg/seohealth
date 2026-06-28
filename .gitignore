@@ -13,6 +13,9 @@
 
 .DS_Store
 
+# Local SQLite backups (e.g. audithealth.db.bak.YYYYMMDD-HHMMSS) — never commit.
+*.db.bak*
+
 # Playwright-MCP browser logs (local tooling artifacts).
 .playwright-mcp/
 
@@ -29,6 +32,12 @@
 
 # Local Claude config / memory — never published.
 .claude/
+
+# Local secrets reference — already covered by /*.md above, but pinned here
+# explicitly so it stays ignored even if the root-markdown rule is relaxed.
+# NEVER commit this file: it holds live API keys.
+credentials.md
+credentials.*.md
 
 # Stale screenshot dumps — superseded by screenshots/ (kept local).
 /audit_walkthrough_screenshots/

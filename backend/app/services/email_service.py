@@ -391,53 +391,36 @@ def send_score_change_email(
 
 
 def _render_weekly_digest_text(payload: dict) -> str:
-    """Plain-text digest body. Kept narrow on purpose — a digest opened
-    on a phone in 5 seconds should read as glance-able news, not a
-    marketing newsletter. HTML can come later; the text version is the
-    contract."""
+    """Plain-text Weekly Insights *teaser* body. The email is a doorway, not
+    the destination — it carries the one-line headline per business and pulls
+    the owner into the full in-app scroll report. Kept narrow on purpose: a
+    teaser read on a phone in 5 seconds. HTML polish can come later."""
     greeting_name = payload.get("greeting_name") or "there"
     businesses = payload.get("businesses") or []
     lines = [
-        f"{_PRODUCT_NAME}",
-        "=" * len(_PRODUCT_NAME),
+        "Weekly Insights",
+        "===============",
         "",
         f"Hi {greeting_name},",
         "",
-        "Here's how your business looked online this week.",
+        "Your Weekly Insights are in. Here's the headline for each business:",
         "",
     ]
     for biz in businesses:
         name = biz.get("name") or "Your business"
-        score = biz.get("score")
-        delta = biz.get("delta")
-        confirmed = biz.get("confirmed_count") or 0
-        new_count = biz.get("new_count") or 0
-        top = biz.get("top_finding")
-
+        headline = biz.get("lead_headline") or ""
         lines.append(f"• {name}")
-        if score is not None:
-            if delta is None:
-                lines.append(f"    Score: {score}/100 (first audit)")
-            elif delta > 0:
-                lines.append(f"    Score: {score}/100  ↑ +{delta}")
-            elif delta < 0:
-                lines.append(f"    Score: {score}/100  ↓ {delta}")
-            else:
-                lines.append(f"    Score: {score}/100  (no change)")
-        if confirmed:
-            lines.append(f"    ✓ {confirmed} fix{'es' if confirmed != 1 else ''} confirmed since last check")
-        if new_count:
-            lines.append(f"    ⊕ {new_count} new thing{'s' if new_count != 1 else ''} to look at")
-        if top:
-            lines.append(f"    Top: {top}")
+        if headline:
+            lines.append(f"    {headline}")
         lines.append("")
 
-    dashboard_url = payload.get("dashboard_url") or ""
-    if dashboard_url:
-        lines.append("Open your dashboard:")
-        lines.append(f"  {dashboard_url}")
+    insights_url = payload.get("insights_url") or ""
+    if insights_url:
+        lines.append("Read your full report — what's moving, how you compare,")
+        lines.append("and the one move that matters this week:")
+        lines.append(f"  {insights_url}")
         lines.append("")
-    lines.append("You're getting this because weekly digests are on for your paid plan.")
+    lines.append("You're getting this because Weekly Insights are on for your paid plan.")
     # NOTE: don't add a STOP / unsubscribe line until the launch-
     # checklist item ("Digest opt-out plumbing") actually ships — until
     # then a working unsubscribe is a promise we can't keep.
@@ -458,7 +441,7 @@ def send_weekly_digest_email(to_email: str, payload: dict) -> None:
     call stack — a failed digest is annoying but not load-bearing for
     the user's own actions in the app.
     """
-    subject = "Your weekly health check digest"
+    subject = "Your Weekly Insights are ready"
 
     if not settings.resend_api_key:
         # Dev fallback — print to the same log the magic-link sender
@@ -483,4 +466,74 @@ def send_weekly_digest_email(to_email: str, payload: dict) -> None:
         logger.exception(
             "Resend failed to deliver weekly digest to %s", to_email
         )
+        raise EmailDeliveryError(str(exc)) from exc
+
+
+# --- Founder notifications ---------------------------------------------------
+
+
+def _founder_email() -> str | None:
+    """First address in ADMIN_EMAILS, falling back to FROM_EMAIL's address.
+
+    Reports route to the founder (you), not the user who filed them. Returns
+    None only when nothing is configured, in which case the caller dev-prints.
+    """
+    first = next(
+        (e.strip() for e in settings.admin_emails.split(",") if e.strip()), ""
+    )
+    return first or None
+
+
+_REPORT_REASON_LABEL = {
+    "incorrect": "Incorrect",
+    "outdated": "Outdated",
+    "not_applicable": "Doesn't apply to me",
+    "other": "Other",
+}
+
+
+def send_insight_report_email(
+    *,
+    user_email: str,
+    business_name: str | None,
+    section: str | None,
+    rec_title: str | None,
+    reason: str,
+    note: str | None,
+) -> None:
+    """Notify the founder that a user flagged an insight as wrong.
+
+    Best-effort: the caller (the report endpoint) swallows failures — the
+    report row is already persisted, so a Resend hiccup never costs us the
+    signal. Dev-prints when RESEND_API_KEY is unset.
+    """
+    reason_label = _REPORT_REASON_LABEL.get(reason, reason)
+    subject = f"⚑ Insight reported: {reason_label} — {rec_title or 'untitled'}"
+    body = (
+        f"A user flagged an insight as wrong.\n\n"
+        f"Reason:   {reason_label}\n"
+        f"Insight:  {rec_title or '(unknown)'}\n"
+        f"Section:  {section or '(unknown)'}\n"
+        f"Business: {business_name or '(unknown)'}\n"
+        f"User:     {user_email}\n"
+        f"Note:     {note or '(none)'}\n"
+    )
+
+    to = _founder_email()
+    if not settings.resend_api_key or not to:
+        print(f"\n[insight-report]\n{body}", flush=True)
+        return
+
+    resend.api_key = settings.resend_api_key
+    try:
+        resend.Emails.send(
+            {
+                "from": settings.from_email,
+                "to": [to],
+                "subject": subject,
+                "text": body,
+            }
+        )
+    except Exception as exc:
+        logger.exception("Resend failed to deliver insight-report email")
         raise EmailDeliveryError(str(exc)) from exc

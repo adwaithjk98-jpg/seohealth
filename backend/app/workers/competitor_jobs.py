@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 
 from app.db import SessionLocal
@@ -217,15 +218,31 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
             business = db.get(Business, business_id)
             if business is None:
                 continue
+            comp = comp_name or "A competitor"
+            # Rotate warm variants so a user tracking several competitors
+            # doesn't get the identical sentence each time. All point at the
+            # comparison ("where you stand") rather than just raising alarm.
+            variants = [
+                (
+                    f"{comp} is making moves 👀",
+                    f"They just picked up {delta} new reviews. See how you stack up.",
+                ),
+                (
+                    f"{comp} pulled ahead this week",
+                    f"{delta} fresh reviews for them — here's where you stand.",
+                ),
+                (
+                    "Your competition just moved 📈",
+                    f"{comp} added {delta} reviews since last week. Tap to compare.",
+                ),
+            ]
+            title, body = random.choice(variants)
             try:
                 push_service.send_to_user(
                     db,
                     business.user_id,
-                    title=f"{comp_name or 'A competitor'} is pulling ahead 👀",
-                    body=(
-                        f"They just picked up {delta} new reviews. "
-                        "See how you stack up."
-                    ),
+                    title=title,
+                    body=body,
                     url=f"/businesses/{business_id}",
                 )
             except Exception:

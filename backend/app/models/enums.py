@@ -29,6 +29,9 @@ class AuditSectionName(str, enum.Enum):
     instagram = "instagram"
     nap = "nap"
     competitors = "competitors"
+    # Site-speed / Core Web Vitals pillar, sourced from the Google PageSpeed
+    # Insights API (HTTP, no headless browser). See scrapers/pagespeed.py.
+    performance = "performance"
 
 
 class AuditSectionStatus(str, enum.Enum):

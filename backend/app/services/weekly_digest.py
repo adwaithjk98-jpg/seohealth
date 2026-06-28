@@ -17,114 +17,67 @@ to harden it.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import SessionLocal
-from app.models import Audit, Business, User
-from app.models.enums import AuditStatus, UserPlan
-from app.services.audit_view import build_audit_detail
+from app.models import User
+from app.models.enums import UserPlan
 from app.services.email_service import send_weekly_digest_email
+from app.services.weekly_insights import build_report_index
 
 
 logger = logging.getLogger(__name__)
 
 
-def _latest_two_audits(db: Session, business_id: int) -> list[Audit]:
-    return (
-        db.query(Audit)
-        .filter(
-            Audit.business_id == business_id,
-            Audit.status == AuditStatus.done,
-        )
-        .order_by(desc(Audit.finished_at), desc(Audit.id))
-        .limit(2)
-        .all()
-    )
-
-
-def _top_open_finding(detail: dict) -> str | None:
-    """Pick the highest-severity open recommendation across sections.
-
-    Severity ranking mirrors the frontend's ``severityRank`` so the
-    digest's "top finding" agrees with what the user sees on the
-    dashboard. ``None`` when the business has no open recs (lovely
-    state — the digest still mentions the score).
-    """
-    severity_rank = {"high": 0, "medium": 1, "low": 2}
-    candidates: list[dict] = []
-    for sec in detail.get("sections", []):
-        for rec in sec.get("recommendations", []):
-            if rec.get("fix_status") != "open":
-                continue
-            candidates.append(rec)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda r: (severity_rank.get(r.get("severity"), 99), r.get("id") or 0))
-    return candidates[0].get("title")
-
-
 def build_user_digest(db: Session, user: User, dashboard_base_url: str) -> dict | None:
-    """Assemble the digest payload for one user.
+    """Assemble the Weekly Insights *teaser* email payload for one user.
 
-    Returns ``None`` when the user has no completed audits across any
-    active business — there's nothing to summarise yet, and a digest
-    that says "no data" is worse than no email.
+    Shares the same engine as the in-app scroll report (``build_report_index``)
+    so the email's per-business headline is exactly the report's lead. The
+    email is a doorway: one headline per business + a link to the full in-app
+    scroll. Returns ``None`` when the user has no completed audits across any
+    active business — a teaser with nothing to tease is worse than no email.
     """
-    active = (
-        db.query(Business)
-        .filter(Business.user_id == user.id, Business.archived_at.is_(None))
-        .order_by(Business.added_at)
-        .all()
-    )
-    business_rows: list[dict] = []
-    for biz in active:
-        recent = _latest_two_audits(db, biz.id)
-        if not recent:
-            continue
-        latest = recent[0]
-        prev = recent[1] if len(recent) > 1 else None
-        detail = build_audit_detail(db, latest)
-        score = detail.get("overall_score")
-        prev_score = (
-            build_audit_detail(db, prev).get("overall_score") if prev is not None else None
-        )
-        delta = (score - prev_score) if (score is not None and prev_score is not None) else None
-        since = detail.get("since_last_check") or {}
-        business_rows.append(
-            {
-                "id": biz.id,
-                "name": biz.name,
-                "score": score,
-                "delta": delta,
-                "confirmed_count": len(since.get("confirmed") or []),
-                "new_count": len(since.get("new") or []),
-                "top_finding": _top_open_finding(detail),
-            }
-        )
-    if not business_rows:
+    index = build_report_index(db, user)
+    rows = index.get("businesses") or []
+    if not rows:
         return None
 
     greeting = (user.display_name or user.email.split("@", 1)[0] or "there").strip()
     return {
         "greeting_name": greeting,
-        "businesses": business_rows,
-        "dashboard_url": f"{dashboard_base_url.rstrip('/')}/dashboard",
+        "businesses": [
+            {
+                "name": r["business"]["name"],
+                "lead_headline": r.get("lead_headline"),
+                "score": r.get("score"),
+            }
+            for r in rows
+        ],
+        "insights_url": f"{dashboard_base_url.rstrip('/')}/weekly-insights",
     }
 
 
 def dispatch_weekly_digests(
     db: Session | None = None,
-    dashboard_base_url: str = "https://adwaiths-macbook-air.taileffa22.ts.net",
+    dashboard_base_url: str | None = None,
 ) -> dict[str, int]:
     """Walk every paid user, build a digest, send.
 
     Returns a small summary the scheduler can log. Doesn't raise on
     individual send failures — one user's Resend hiccup shouldn't tank
     the rest of the batch.
+
+    ``dashboard_base_url`` defaults to ``settings.frontend_base_url`` (the
+    real public site URL in prod, e.g. https://seohealth.in) so the Weekly
+    Insights email links resolve correctly. The scheduler calls this with no
+    args, so that default is what production actually uses.
     """
+    if dashboard_base_url is None:
+        dashboard_base_url = settings.frontend_base_url
     owns_session = db is None
     if db is None:
         db = SessionLocal()

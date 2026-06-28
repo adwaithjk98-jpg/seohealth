@@ -23,6 +23,7 @@ from app.services import audit_events
 from app.services import auth as auth_service
 from app.services import subscriptions as subs_service
 from app.services.audit_view import build_audit_detail
+from app.services.weekly_insights import build_report, build_report_index
 from app.workers.queue import enqueue_audit
 
 router = APIRouter()
@@ -239,6 +240,42 @@ def get_latest_audit_for_business(
             status_code=404, detail="no completed audit yet for this business"
         )
     return AuditDetailResponse(**build_audit_detail(db, audit))
+
+
+@router.get("/businesses/{business_id}/weekly-insights")
+def get_weekly_insights(
+    business_id: int,
+    audit_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """The full Weekly Insights report (scroll narrative) for one business.
+
+    ``audit_id`` selects a past report from the history; omitted returns the
+    latest. 404s when the business has no completed audit yet. Free vs paid
+    depth is decided inside ``build_report``.
+    """
+    business = db.get(Business, business_id)
+    if business is None or not _user_owns_business(business, user):
+        raise HTTPException(status_code=404, detail="business not found")
+    report = build_report(db, business, user, audit_id=audit_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no insights yet for this business")
+    return report
+
+
+@router.get("/weekly-insights")
+def get_weekly_insights_index(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Lightweight index of the caller's businesses (lead headline each).
+
+    Powers the single home-screen Weekly Insights entry: single-business users
+    open straight into their report; Max users get a switcher. ``businesses``
+    is empty when the user has no completed audits — the button hides itself.
+    """
+    return build_report_index(db, user)
 
 
 def _format_sse(event_type: str, data: dict) -> str:

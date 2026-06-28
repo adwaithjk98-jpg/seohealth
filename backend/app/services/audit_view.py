@@ -29,7 +29,7 @@ from app.services.fix_verifier import verify as verify_fix_signal
 from app.services.pillar_optout import enabled_pillars
 
 
-SECTION_ORDER = ["maps", "website", "instagram", "nap", "competitors"]
+SECTION_ORDER = ["maps", "website", "performance", "instagram", "nap", "competitors"]
 
 
 # Trend cutoff — score has to move at least this much to count as up/down.

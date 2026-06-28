@@ -43,7 +43,7 @@
   const isPaid = $derived(tier !== 'free');
   const isMax = $derived(tier === 'max');
   const planLabel = $derived(tier === 'max' ? 'Max' : tier === 'paid' ? 'Pro' : 'Free');
-  const limits = $derived(subscriptionData?.limits ?? { businesses: 1, audits_per_week: 1 });
+  const limits = $derived(subscriptionData?.limits ?? { businesses: 1, audits_per_week: 2 });
   const businessCount = $derived(subscriptionData?.business_count ?? 0);
   const subscription = $derived(subscriptionData?.subscription ?? null);
 
@@ -203,73 +203,52 @@
       </button>
     </div>
   {:else}
-    <div class="card p-6 sm:p-8">
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p class="text-xs uppercase tracking-wide text-canvas-muted">Current plan</p>
-          <p class="mt-1 text-2xl font-semibold text-canvas-ink">
-            {planLabel}
-          </p>
-          <p class="mt-1 text-sm text-canvas-muted">
-            {limits.businesses} {limits.businesses === 1 ? 'business' : 'businesses'} ·
-            up to {limits.audits_per_week} {limits.audits_per_week === 1 ? 'audit' : 'audits'}/week
-          </p>
-        </div>
-        <span
-          class={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${
-            isPaid
-              ? 'bg-healthy-50 text-healthy-700'
-              : 'bg-canvas-soft text-canvas-muted'
-          }`}
-        >
-          {#if isPaid}● Active{:else}Free tier{/if}
-        </span>
-      </div>
-
-      <div class="mt-5 rounded-2xl bg-canvas-soft px-4 py-3 text-sm text-canvas-ink">
-        You're using <strong>{businessCount}</strong> of {limits.businesses}
-        {limits.businesses === 1 ? 'business' : 'business slots'} on this plan.
-      </div>
-
-      {#if subscription && isPaid}
-        <dl class="mt-5 grid gap-3 text-sm text-canvas-ink sm:grid-cols-2">
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-canvas-muted">Status</dt>
-            <dd class="mt-0.5 capitalize">{subscription.status}</dd>
-          </div>
-          {#if subscription.next_billing_date}
-            <div>
-              <dt class="text-xs uppercase tracking-wide text-canvas-muted">Next billing</dt>
-              <dd class="mt-0.5">{fmtDate(subscription.next_billing_date)}</dd>
-            </div>
-          {/if}
-          {#if subscription.razorpay_subscription_id}
-            <div class="sm:col-span-2">
-              <dt class="text-xs uppercase tracking-wide text-canvas-muted">Razorpay reference</dt>
-              <dd class="mt-0.5 break-all font-mono text-xs">
-                {subscription.razorpay_subscription_id}
-              </dd>
-            </div>
-          {/if}
-        </dl>
-      {/if}
-
-      {#if upgradeMessage}
-        <p
-          class="mt-5 flex items-center gap-2 rounded-xl bg-healthy-50 px-3 py-2 text-sm text-healthy-700"
-          in:fly={{ y: 4, duration: 240 }}
-        >
-          <span aria-hidden="true">✓</span>
-          <span>{upgradeMessage}</span>
+    <!-- Current plan: a compact one-strip summary. Deliberately small so the
+         plan options below are the page's focus, not the status of a plan the
+         user already has. The Razorpay reference is intentionally omitted —
+         it's internal noise no user needs (it lives on /account if required). -->
+    <div class="card flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+      <div class="min-w-0">
+        <p class="text-[11px] uppercase tracking-wide text-canvas-muted">Current plan</p>
+        <p class="mt-0.5 text-sm text-canvas-ink">
+          <span class="font-semibold">{planLabel}</span>
+          <span class="text-canvas-muted">
+            · {businessCount} of {limits.businesses}
+            {limits.businesses === 1 ? 'business' : 'businesses'}
+            · up to {limits.audits_per_week}
+            {limits.audits_per_week === 1 ? 'audit' : 'audits'}/week
+          </span>
         </p>
-      {/if}
+        {#if subscription && isPaid && subscription.next_billing_date}
+          <p class="mt-0.5 text-xs text-canvas-muted">
+            Renews {fmtDate(subscription.next_billing_date)}
+          </p>
+        {/if}
+      </div>
+      <span
+        class={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${
+          isPaid ? 'bg-healthy-50 text-healthy-700' : 'bg-canvas-soft text-canvas-muted'
+        }`}
+      >
+        {#if isPaid}● Active{:else}Free tier{/if}
+      </span>
     </div>
+
+    {#if upgradeMessage}
+      <p
+        class="flex items-center gap-2 rounded-xl bg-healthy-50 px-3 py-2 text-sm text-healthy-700"
+        in:fly={{ y: 4, duration: 240 }}
+      >
+        <span aria-hidden="true">✓</span>
+        <span>{upgradeMessage}</span>
+      </p>
+    {/if}
 
     <!-- Plan switcher: a pill toggles Free / Pro / Max, and the single card
          below swaps to the selected plan. Swipe left/right works too. -->
     <div class="space-y-4">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-canvas-muted">
-        Choose your plan
+        {isPaid ? 'Compare plans' : 'Choose your plan'}
       </h2>
 
       <div

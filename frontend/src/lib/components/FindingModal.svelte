@@ -4,7 +4,7 @@
   import { quintOut } from 'svelte/easing';
   import { reduced } from '$lib/motion.js';
 
-  import { patchRecommendation } from '$lib/api.js';
+  import { patchRecommendation, reportRecommendation } from '$lib/api.js';
   import {
     severityLabel,
     severityTone,
@@ -53,6 +53,35 @@
   let burstTimer = null;
 
   const isDone = $derived(recommendation?.fix_status === 'done');
+
+  // --- Report-this-insight (quality signal + trust) ---
+  const REPORT_REASONS = [
+    { value: 'incorrect', label: 'Incorrect' },
+    { value: 'outdated', label: 'Outdated' },
+    { value: 'not_applicable', label: "Doesn't apply to me" },
+    { value: 'other', label: 'Other' }
+  ];
+  let reportOpen = $state(false);
+  let reportReason = $state('incorrect');
+  let reportNote = $state('');
+  let reportSubmitting = $state(false);
+  let reportError = $state(/** @type {string | null} */ (null));
+  let reportDone = $state(false);
+
+  async function submitReport() {
+    if (!recommendation || reportSubmitting) return;
+    reportSubmitting = true;
+    reportError = null;
+    try {
+      await reportRecommendation(recommendation.id, reportReason, reportNote);
+      reportDone = true;
+      reportOpen = false;
+    } catch (err) {
+      reportError = err instanceof Error ? err.message : 'Could not send your report.';
+    } finally {
+      reportSubmitting = false;
+    }
+  }
 
   // s7 — touch swipe-down to dismiss on mobile. The close-X in the top
   // right of a near-full-height modal is a thumb-stretch on a phone, so
@@ -294,6 +323,76 @@
             <SuccessBurst />
           {/if}
         </div>
+      </div>
+
+      <!-- Report-this-insight. Builds trust ("if it's wrong, I can flag it")
+           and hands the founder a quality signal — the most-reported finding
+           type is a real heuristic/scraper bug to fix. Inline, not a second
+           modal, so it never gets in the way of the primary fix flow. -->
+      <div class="mt-4 border-t border-canvas-soft pt-4">
+        {#if reportDone}
+          <p class="flex items-center gap-2 text-xs text-healthy-700">
+            <span aria-hidden="true">✓</span>
+            Thanks — we'll take a look at this one.
+          </p>
+        {:else if reportOpen}
+          <div class="space-y-3" in:fly={reduced({ y: 4, duration: 180 })}>
+            <p class="text-xs font-semibold text-canvas-ink">
+              What's off about this insight?
+            </p>
+            <div class="flex flex-wrap gap-2">
+              {#each REPORT_REASONS as r}
+                <button
+                  type="button"
+                  class={`rounded-full border px-3 py-1 text-xs transition ${
+                    reportReason === r.value
+                      ? 'border-healthy-300 bg-healthy-50 text-healthy-700'
+                      : 'border-canvas-soft text-canvas-muted hover:text-canvas-ink'
+                  }`}
+                  aria-pressed={reportReason === r.value}
+                  onclick={() => (reportReason = r.value)}
+                >
+                  {r.label}
+                </button>
+              {/each}
+            </div>
+            <textarea
+              bind:value={reportNote}
+              rows="2"
+              maxlength="1000"
+              placeholder="Anything we should know? (optional)"
+              class="w-full rounded-xl border border-canvas-soft bg-canvas-soft/30 px-3 py-2 text-sm text-canvas-ink placeholder:text-canvas-muted focus:border-healthy-300 focus:outline-none"
+            ></textarea>
+            {#if reportError}
+              <p class="text-xs text-action-700">{reportError}</p>
+            {/if}
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="btn-primary text-xs"
+                disabled={reportSubmitting}
+                onclick={submitReport}
+              >
+                {reportSubmitting ? 'Sending…' : 'Send report'}
+              </button>
+              <button
+                type="button"
+                class="btn-ghost text-xs text-canvas-muted"
+                onclick={() => (reportOpen = false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        {:else}
+          <button
+            type="button"
+            class="text-xs text-canvas-muted underline-offset-2 transition hover:text-canvas-ink hover:underline"
+            onclick={() => (reportOpen = true)}
+          >
+            ⚑ Report this insight
+          </button>
+        {/if}
       </div>
     </div>
   </div>

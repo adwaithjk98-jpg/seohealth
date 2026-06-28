@@ -48,7 +48,10 @@ logger = logging.getLogger(__name__)
 TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
     UserPlan.free: {
         "businesses": 1,
-        "audits_per_week": 1,
+        # 2/wk (raised from 1) — unit economics give headroom (~₹14.7/mo
+        # ceiling, fits the 3% break-even target); spend it on audit
+        # frequency, not competitors. See unit-economics note.
+        "audits_per_week": 2,
         "competitors": 0,
         # Phase 4 §3: free users cannot run Discovery Scans at all. The
         # gating service raises 402 well before consulting this number,
@@ -72,7 +75,7 @@ TIER_LIMITS: dict[UserPlan, dict[str, int]] = {
         "discovery_scans_per_month": 1,
     },
     UserPlan.max: {
-        # Max (₹2,500/mo) is the "power" tier: its headline is *faster, more*
+        # Max (₹1,999/mo) is the "power" tier: its headline is *faster, more*
         # — twice-weekly auto-audits + twice-weekly competitor refresh (vs Pro's
         # weekly), more competitors, higher quota. Multi-business (up to 5) is a
         # listed perk, not the pitch. The twice-weekly cadence is gated in

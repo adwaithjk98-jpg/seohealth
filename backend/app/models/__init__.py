@@ -6,6 +6,7 @@ from app.models.competitor import Competitor
 from app.models.competitor_metric_cache import CompetitorMetricCache
 from app.models.competitor_observation import CompetitorObservation
 from app.models.discovery_scan import DiscoveryScan
+from app.models.insight_report import InsightReport
 from app.models.push_subscription import PushSubscription
 from app.models.recommendation import Recommendation
 from app.models.session import Session
@@ -23,6 +24,7 @@ __all__ = [
     "CompetitorMetricCache",
     "CompetitorObservation",
     "DiscoveryScan",
+    "InsightReport",
     "PushSubscription",
     "Session",
     "Subscription",

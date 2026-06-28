@@ -79,6 +79,12 @@ SIGNAL_MAP: dict[str, tuple[str, _Predicate]] = {
     "maps.replies_to_reviews": ("maps", _maps_reply_rate_at_least(0.1)),
     # Instagram pillar
     "instagram.has_bio_link": ("instagram", _has("has_bio_link")),
+    # Performance pillar — the scraper persists boolean *_good flags whenever
+    # it has a measurement, so a plain truthy check confirms the fix landed.
+    "performance.lcp_good": ("performance", _has("lcp_good")),
+    "performance.cls_good": ("performance", _has("cls_good")),
+    "performance.tbt_good": ("performance", _has("tbt_good")),
+    "performance.overall_good": ("performance", _has("overall_good")),
 }
 
 

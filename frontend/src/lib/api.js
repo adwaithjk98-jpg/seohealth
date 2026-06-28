@@ -24,6 +24,34 @@ export async function getAudit(auditId) {
   return res.json();
 }
 
+/**
+ * Lightweight index of the user's businesses with a lead headline each —
+ * powers the single home-screen Weekly Insights entry (single-business users
+ * open straight into their report; Max users get a switcher).
+ */
+export async function getWeeklyInsightsIndex() {
+  const res = await fetch('/api/weekly-insights', { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
+/**
+ * Fetch the full Weekly Insights report (scroll narrative) for one business.
+ * `auditId` selects a past report; omit for the latest. Returns null on 404
+ * (no completed audit yet).
+ * @param {number} businessId
+ * @param {number} [auditId]
+ */
+export async function getWeeklyInsights(businessId, auditId) {
+  const qs = auditId != null ? `?audit_id=${auditId}` : '';
+  const res = await fetch(`/api/businesses/${businessId}/weekly-insights${qs}`, {
+    credentials: 'same-origin'
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
 export async function getLatestAuditForBusiness(businessId) {
   const res = await fetch(`/api/businesses/${businessId}/latest-audit`);
   if (!res.ok) {
@@ -42,6 +70,23 @@ export async function patchRecommendation(recId, fixStatus) {
   });
   if (!res.ok) throw new Error(await readJsonError(res));
   return res.json();
+}
+
+/**
+ * Flag a recommendation as wrong. `reason` is one of
+ * 'incorrect' | 'outdated' | 'not_applicable' | 'other'; `note` is optional.
+ * Returns nothing (204) on success.
+ * @param {number} recId
+ * @param {string} reason
+ * @param {string} [note]
+ */
+export async function reportRecommendation(recId, reason, note) {
+  const res = await fetch(`/api/recommendations/${recId}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason, note: note || null })
+  });
+  if (!res.ok) throw new Error(await readJsonError(res));
 }
 
 export async function startAudit(businessId) {

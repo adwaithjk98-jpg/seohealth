@@ -52,6 +52,11 @@ SECTION_META: dict[str, dict[str, str]] = {
         "emoji": "📋",
         "tagline": "Your details across the web",
     },
+    "performance": {
+        "label": "Site speed",
+        "emoji": "⚡",
+        "tagline": "How fast your site loads",
+    },
     "competitors": {
         "label": "Competitors",
         "emoji": "🏘️",
@@ -104,6 +109,8 @@ def derive_sub_checks(section: str, raw: dict[str, Any] | None) -> list[dict[str
         checks = _instagram_checks(raw)
     elif section == AuditSectionName.nap.value:
         checks = _nap_checks(raw)
+    elif section == AuditSectionName.performance.value:
+        checks = _performance_checks(raw)
     else:
         checks = []
     return [asdict(c) for c in checks]
@@ -136,6 +143,14 @@ def section_summary(section: str, raw: dict[str, Any] | None) -> str | None:
         sources = raw.get("sources_checked") or []
         if sources:
             return f"Checked across {len(sources)} sources"
+        return None
+    if section == AuditSectionName.performance.value:
+        score = raw.get("performance_score")
+        lcp = raw.get("lcp_display")
+        if score is not None and lcp:
+            return f"{score}/100 · loads in {lcp}"
+        if score is not None:
+            return f"{score}/100 on mobile"
         return None
     return None
 
@@ -434,6 +449,73 @@ def _nap_checks(raw: dict[str, Any]) -> list[SubCheck]:
                 detail=detail,
             )
         )
+
+    return checks
+
+
+_FIELD_CATEGORY_STATUS = {"FAST": "good", "AVERAGE": "warn", "SLOW": "bad"}
+
+
+def _performance_checks(raw: dict[str, Any]) -> list[SubCheck]:
+    """Render PageSpeed results into Layer 2 sub-checks: the overall score,
+    the three Core Web Vitals (lab), and — when Google has it — real-user
+    field data."""
+    checks: list[SubCheck] = []
+
+    score = raw.get("performance_score")
+    if score is not None:
+        if score >= 90:
+            status = "good"
+        elif score >= 50:
+            status = "warn"
+        else:
+            status = "bad"
+        checks.append(
+            SubCheck(label="Overall speed score", status=status, value=f"{score}/100")
+        )
+
+    if raw.get("lcp_ms") is not None:
+        checks.append(
+            SubCheck(
+                label="Largest content loads (LCP)",
+                status="good" if raw.get("lcp_good") else "bad",
+                value=raw.get("lcp_display") or f"{raw['lcp_ms']/1000:.1f}s",
+                detail="Google's target is under 2.5s",
+            )
+        )
+
+    if raw.get("cls") is not None:
+        checks.append(
+            SubCheck(
+                label="Visual stability (CLS)",
+                status="good" if raw.get("cls_good") else "warn",
+                value=raw.get("cls_display") or f"{raw['cls']:.2f}",
+                detail="Lower is better — target under 0.10",
+            )
+        )
+
+    if raw.get("tbt_ms") is not None:
+        checks.append(
+            SubCheck(
+                label="Responsiveness (blocking time)",
+                status="good" if raw.get("tbt_good") else "warn",
+                value=raw.get("tbt_display") or f"{int(raw['tbt_ms'])} ms",
+                detail="How long taps/scrolls are blocked while loading",
+            )
+        )
+
+    field = raw.get("field_data") or {}
+    if field.get("available"):
+        overall = field.get("overall")
+        if overall:
+            checks.append(
+                SubCheck(
+                    label="Real-visitor experience (last 28 days)",
+                    status=_FIELD_CATEGORY_STATUS.get(overall, "info"),
+                    value=overall.replace("_", " ").title(),
+                    detail="Measured from real Chrome visitors to your site",
+                )
+            )
 
     return checks
 

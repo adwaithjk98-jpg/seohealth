@@ -243,7 +243,7 @@
       <div>
         <p class="text-sm font-medium text-canvas-ink">Want a fresh check?</p>
         <p class="text-xs text-canvas-muted">
-          We'll re-run all four pillars and carry your "done" check-marks forward.
+          We'll re-run every pillar and carry your "done" check-marks forward.
         </p>
         {#if reauditError}
           <p

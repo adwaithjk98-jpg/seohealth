@@ -577,27 +577,33 @@
          deliberately muted so the user only burns a quota slot when
          the existing list really is exhausted. -->
     <div class="space-y-4">
-      <a
-        href={`/dashboard/competitors/discover?scan_id=${latestPriorScan.id}`}
-        class="card group flex flex-col gap-3 border border-healthy-200 bg-gradient-to-br from-healthy-50/70 to-white p-6 transition hover:-translate-y-0.5 hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
-        in:fly={{ y: 6, duration: 220, easing: quintOut }}
-      >
-        <div class="space-y-1">
-          <p class="text-xs font-semibold uppercase tracking-wide text-healthy-700">
-            Revisit your earlier list
-          </p>
-          <p class="text-base font-semibold text-canvas-ink">
-            {latestPriorScan.result_count}
-            {latestPriorScan.result_count === 1 ? 'business' : 'businesses'} we already
-            found for you
-          </p>
-          <p class="text-xs text-canvas-muted">
-            From your last scan — pick up where you left off without re-running the
-            scraper.
-          </p>
-        </div>
-        <span class="text-2xl text-healthy-600 sm:ml-4">→</span>
-      </a>
+      <!-- Only surface the revisit card when the earlier scan actually
+           found someone. A "0 businesses we already found" card reads as
+           broken and nudges nothing — when it's empty we drop it and let
+           Add-manually / Force-new-scan lead. -->
+      {#if latestPriorScan.result_count > 0}
+        <a
+          href={`/dashboard/competitors/discover?scan_id=${latestPriorScan.id}`}
+          class="card group flex flex-col gap-3 border border-healthy-200 bg-gradient-to-br from-healthy-50/70 to-white p-6 transition hover:-translate-y-0.5 hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
+          in:fly={{ y: 6, duration: 220, easing: quintOut }}
+        >
+          <div class="space-y-1">
+            <p class="text-xs font-semibold uppercase tracking-wide text-healthy-700">
+              Revisit your earlier list
+            </p>
+            <p class="text-base font-semibold text-canvas-ink">
+              {latestPriorScan.result_count}
+              {latestPriorScan.result_count === 1 ? 'business' : 'businesses'} we already
+              found for you
+            </p>
+            <p class="text-xs text-canvas-muted">
+              From your last scan — pick up where you left off without re-running the
+              scraper.
+            </p>
+          </div>
+          <span class="text-2xl text-healthy-600 sm:ml-4">→</span>
+        </a>
+      {/if}
 
       <div class="grid gap-3 sm:grid-cols-2">
         <button

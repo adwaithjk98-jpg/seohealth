@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.auth_deps import admin_user
 from app.db import get_db
-from app.models import Audit, Subscription, User
+from app.models import Audit, InsightReport, Subscription, User
 from app.models.enums import SubscriptionStatus, UserPlan
 
 router = APIRouter()
@@ -28,7 +28,7 @@ router = APIRouter()
 # Monthly price per paid tier (INR). Mirrors the Razorpay plans; used only to
 # estimate MRR from current plan counts. Source of truth for billing is
 # Razorpay; this is the at-a-glance number.
-_TIER_MONTHLY_INR = {UserPlan.paid: 549, UserPlan.max: 2500}
+_TIER_MONTHLY_INR = {UserPlan.paid: 549, UserPlan.max: 1999}
 
 
 def _now() -> datetime:
@@ -139,4 +139,46 @@ def admin_stats(
         "queue_depth": _queue_depths(),
         # The real server-upgrade signal (watch RAM/load, not user count).
         "server": _server_health(),
+        # Quality signal — open "this insight is wrong" reports waiting on you.
+        "reports_unresolved": (
+            db.query(func.count(InsightReport.id))
+            .filter(InsightReport.resolved.is_(False))
+            .scalar()
+            or 0
+        ),
+    }
+
+
+@router.get("/admin/reports")
+def admin_reports(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(admin_user),
+) -> dict:
+    """Recent user-submitted 'this insight is wrong' reports (newest first).
+
+    Patterns matter more than individual rows: a recommendation type that
+    keeps getting reported is a real heuristic/scraper bug to fix.
+    """
+    rows = (
+        db.query(InsightReport)
+        .order_by(InsightReport.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return {
+        "unresolved": sum(1 for r in rows if not r.resolved),
+        "reports": [
+            {
+                "id": r.id,
+                "reason": r.reason,
+                "section": r.section,
+                "rec_title": r.rec_title,
+                "note": r.note,
+                "business_id": r.business_id,
+                "audit_id": r.audit_id,
+                "resolved": r.resolved,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
     }

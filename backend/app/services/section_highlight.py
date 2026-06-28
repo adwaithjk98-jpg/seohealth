@@ -33,6 +33,8 @@ def section_highlight(
         return _instagram_highlight(current, previous or {})
     if section == "nap":
         return _nap_highlight(current, previous or {})
+    if section == "performance":
+        return _performance_highlight(current, previous or {})
     return None
 
 
@@ -96,6 +98,27 @@ def _instagram_highlight(curr: dict[str, Any], prev: dict[str, Any]) -> str | No
             if handle
             else f"{curr_followers:,} followers"
         )
+    return None
+
+
+def _performance_highlight(curr: dict[str, Any], prev: dict[str, Any]) -> str | None:
+    # Prefer the score delta — most newsworthy on a speed card.
+    curr_score = curr.get("performance_score")
+    prev_score = prev.get("performance_score")
+    if isinstance(curr_score, int) and isinstance(prev_score, int):
+        diff = curr_score - prev_score
+        if diff >= 2:
+            return f"Speed score up {diff} since last check"
+        if diff <= -2:
+            return f"Speed score down {abs(diff)} since last check"
+    # First-audit / steady fallback — surface the most vivid single fact.
+    lcp = curr.get("lcp_display")
+    if isinstance(curr_score, int):
+        if curr_score >= 90:
+            return f"Loads fast — {curr_score}/100 on mobile"
+        if lcp:
+            return f"Loads in {lcp} on mobile"
+        return f"{curr_score}/100 on mobile"
     return None
 
 

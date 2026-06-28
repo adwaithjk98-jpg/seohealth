@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # Display-only price labels for the Billing UI. Razorpay-side pricing is
     # configured on the plan in the Razorpay dashboard.
     paid_plan_price_label: str = "₹549 / month"
-    max_plan_price_label: str = "₹2,500 / month"
+    max_plan_price_label: str = "₹1,999 / month"
 
     # Path to the standalone ``audit_scraper`` engine (sibling repo). The
     # competitor scraper adapter spawns ``python3 scrape_competitors.py``
@@ -92,6 +92,16 @@ class Settings(BaseSettings):
     # performance tracing volume — 0 keeps it error-only (free-tier friendly).
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.0
+
+    # PageSpeed Insights (the Performance / Site-Speed audit pillar). The PSI
+    # API works without a key at a low anonymous quota; set a key in prod for
+    # the higher per-day quota (Google Cloud console → PageSpeed Insights API).
+    # ``strategy`` is ``mobile`` (local-business traffic is mobile-first) or
+    # ``desktop``. The timeout is generous because Google runs Lighthouse
+    # synchronously and a cold run can take 20–30s.
+    pagespeed_api_key: str = ""
+    pagespeed_strategy: str = "mobile"
+    pagespeed_timeout_seconds: float = 60.0
 
     # HTTP rate limiting (slowapi). Limits are per-client-IP. Tunable per env;
     # the defaults are generous enough not to bite a real user but cap abuse.

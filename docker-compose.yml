@@ -56,6 +56,10 @@ x-backend-env: &backend-env
   # Competitor-insights LLM phrasing (deterministic fallback when empty).
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   ANTHROPIC_INSIGHTS_MODEL: ${ANTHROPIC_INSIGHTS_MODEL:-claude-haiku-4-5-20251001}
+  # PageSpeed Insights (Performance / Site-Speed pillar). Empty key = the
+  # anonymous low-quota path; set a key in prod for the higher daily quota.
+  PAGESPEED_API_KEY: ${PAGESPEED_API_KEY:-}
+  PAGESPEED_STRATEGY: ${PAGESPEED_STRATEGY:-mobile}
   # HTTP rate limiting (slowapi).
   RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
   RATE_LIMIT_REQUEST_LINK: ${RATE_LIMIT_REQUEST_LINK:-5/minute}

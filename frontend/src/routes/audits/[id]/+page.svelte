@@ -454,7 +454,7 @@
       <div class="card p-5 sm:p-6">
         <p class="text-sm font-semibold text-canvas-ink">What we looked at</p>
         <p class="mt-1 text-xs text-canvas-muted">
-          Four pillars that decide how easy you are to find online. Tap any one on the
+          The pillars that decide how easy you are to find online. Tap any one on the
           dashboard to dig into the details.
         </p>
         <ul class="mt-3 space-y-1.5 text-sm">
