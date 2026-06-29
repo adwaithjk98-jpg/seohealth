@@ -103,6 +103,34 @@ class Settings(BaseSettings):
     pagespeed_strategy: str = "mobile"
     pagespeed_timeout_seconds: float = 60.0
 
+    # Instagram Graph API — Model A: ``business_discovery`` reads PUBLIC stats
+    # for any IG Business/Creator handle using ONE server-side token (our own
+    # @seo.health account). Powers both the user's own IG audit section and
+    # competitor IG tracking through ``scrapers.instagram.audit_instagram``,
+    # with the anonymous OG-tag scraper as automatic fallback. Works under
+    # Standard Access (admin token has a role) — no App Review needed.
+    #
+    # Disabled by default: flip ``ig_graph_enabled`` on only once a durable
+    # token is in ``ig_graph_access_token`` (mint/inspect with scripts/ig_token.py)
+    # AND ``business_discovery`` is confirmed returning data. VERIFIED 2026-06-29:
+    # needs a USER token (not a Page token) with scopes instagram_basic +
+    # instagram_manage_insights + pages_read_engagement + ads_read — all Standard
+    # Access, no App Review. Prefer a Business Manager System User token (never
+    # expires). See memory: meta_ig_graph_plan. ``ig_graph_user_id`` = @seo.health.
+    ig_graph_enabled: bool = False
+    ig_graph_access_token: str = ""
+    ig_graph_user_id: str = "17841413032640533"
+    ig_graph_api_version: str = "v25.0"
+    ig_graph_timeout_seconds: float = 12.0
+    # Positive-response cache TTL (seconds). Guards the single account's
+    # ~200/hr quota against re-audits + weekly competitor refreshes. 0 disables.
+    ig_graph_cache_ttl_seconds: float = 21600.0  # 6 hours
+    # Meta app credentials. ``meta_app_secret`` (when set) is used at request
+    # time for ``appsecret_proof`` and by scripts/ig_token.py to mint/refresh
+    # tokens. The app id is public; the secret is server-only — never ship it.
+    meta_app_id: str = "1378304534203823"
+    meta_app_secret: str = ""
+
     # HTTP rate limiting (slowapi). Limits are per-client-IP. Tunable per env;
     # the defaults are generous enough not to bite a real user but cap abuse.
     rate_limit_enabled: bool = True

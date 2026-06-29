@@ -21,6 +21,8 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
+from app.config import settings
+from scrapers.ig_graph import fetch_business_discovery
 from scrapers.types import BusinessInput, RecommendationDraft, SectionResult
 
 logger = logging.getLogger(__name__)
@@ -105,7 +107,16 @@ async def audit_instagram(business: BusinessInput) -> SectionResult:
         )
 
     url = f"{INSTAGRAM_BASE}/{handle}/"
-    raw: dict[str, Any] = {"handle": handle, "url": url}
+
+    # Model A: prefer the Graph API ``business_discovery`` read when configured.
+    # It returns reliable public stats with no login wall; ``None`` means
+    # disabled / unconfigured / unreachable, so we fall through to the scraper.
+    if settings.ig_graph_enabled:
+        graph = await fetch_business_discovery(handle)
+        if graph is not None:
+            return _finalize_result(_raw_from_graph(handle, url, graph))
+
+    raw: dict[str, Any] = {"handle": handle, "url": url, "source": "og"}
 
     try:
         async with httpx.AsyncClient(
@@ -175,11 +186,58 @@ async def audit_instagram(business: BusinessInput) -> SectionResult:
             recommendations=[_login_wall_rec(handle)],
         )
 
+    return _finalize_result(raw)
+
+
+# --- result assembly ---------------------------------------------------------
+
+
+def _finalize_result(raw: dict[str, Any]) -> SectionResult:
+    """Score + draft recs for a populated ``raw`` dict (Graph or OG path).
+
+    ``done`` when we have both follower and post counts; ``partial`` otherwise.
+    Shared by both data sources so they produce identical dashboard output.
+    """
     score = _score_instagram(raw)
     recommendations = _recommendations(raw)
-
     status = "done" if "followers" in raw and "post_count" in raw else "partial"
-    return SectionResult(score=score, status=status, raw_data=raw, recommendations=recommendations)
+    return SectionResult(
+        score=score, status=status, raw_data=raw, recommendations=recommendations
+    )
+
+
+def _raw_from_graph(handle: str, url: str, graph: dict[str, Any]) -> dict[str, Any]:
+    """Build the scraper's ``raw`` vocabulary from a business_discovery payload.
+
+    Mirrors what the OG-tag path produces so scoring, recs, NAP cross-checks and
+    the dashboard render identically regardless of where the numbers came from.
+    The bio-derived signals (website link, location, phone) are recomputed here
+    with the same helpers the scraper uses. ``following`` / ``last_post_days_ago``
+    aren't exposed by business_discovery for a discovered account, so they stay
+    ``None`` (the dashboard renders those sub-checks neutrally).
+    """
+    biography = graph.get("biography")
+    external_url = graph.get("external_url")
+    raw: dict[str, Any] = {"handle": handle, "url": url, "source": "graph"}
+    if graph.get("followers") is not None:
+        raw["followers"] = graph["followers"]
+    if graph.get("post_count") is not None:
+        raw["post_count"] = graph["post_count"]
+    if biography is not None:
+        raw["biography"] = biography
+    raw["bio_has_website_link"] = bool(external_url)
+    if external_url:
+        raw["external_url"] = external_url
+    raw["bio_has_location"] = _bio_has_location(biography)
+    raw["phone"] = _extract_phone(biography, "")
+    raw["address"] = None
+    raw["following"] = None
+    raw["last_post_days_ago"] = None
+    if graph.get("display_name"):
+        raw["display_name"] = graph["display_name"]
+    if graph.get("profile_picture_url"):
+        raw["profile_picture_url"] = graph["profile_picture_url"]
+    return raw
 
 
 # --- parsing helpers ---------------------------------------------------------

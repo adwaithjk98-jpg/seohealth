@@ -60,6 +60,13 @@ x-backend-env: &backend-env
   # anonymous low-quota path; set a key in prod for the higher daily quota.
   PAGESPEED_API_KEY: ${PAGESPEED_API_KEY:-}
   PAGESPEED_STRATEGY: ${PAGESPEED_STRATEGY:-mobile}
+  # Instagram Graph API — Model A (business_discovery). Disabled until a
+  # long-lived Page token is set; falls back to the OG-tag scraper otherwise.
+  IG_GRAPH_ENABLED: ${IG_GRAPH_ENABLED:-false}
+  IG_GRAPH_ACCESS_TOKEN: ${IG_GRAPH_ACCESS_TOKEN:-}
+  IG_GRAPH_USER_ID: ${IG_GRAPH_USER_ID:-17841413032640533}
+  META_APP_ID: ${META_APP_ID:-1378304534203823}
+  META_APP_SECRET: ${META_APP_SECRET:-}
   # HTTP rate limiting (slowapi).
   RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
   RATE_LIMIT_REQUEST_LINK: ${RATE_LIMIT_REQUEST_LINK:-5/minute}
