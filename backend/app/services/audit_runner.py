@@ -516,7 +516,14 @@ async def run_audit(audit_id: int) -> None:
             # half-empty audits read as 85/100 — misleading, since the
             # per-section "Skipped" cards already prompt the user to
             # fix the underlying data.
-            section_scores.append(result.score)
+            #
+            # ``score is None`` is distinct from ``score == 0``: it means the
+            # section couldn't be measured at all (e.g. IG account isn't a
+            # Business/Creator profile), so it's *excluded* from the average
+            # rather than dragging it to 0 — mirroring the read path in
+            # audit_view and ``_previous_overall_score``.
+            if result.score is not None:
+                section_scores.append(result.score)
             prev_snap = prev_snapshots.get(section.value, {})
             await stream.publish(
                 {

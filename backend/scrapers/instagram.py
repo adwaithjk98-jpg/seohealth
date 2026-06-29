@@ -22,13 +22,24 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import settings
-from scrapers.ig_graph import fetch_business_discovery
+from scrapers.ig_graph import discover_business
 from scrapers.types import BusinessInput, RecommendationDraft, SectionResult
 
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_S = 15.0
 INSTAGRAM_BASE = "https://www.instagram.com"
+
+# Shown on the IG card (and every derived field) when we have no stats and
+# won't scrape for them. ``not_business_account`` is the honest, common case;
+# ``fetch_error`` is a transient our-side outage and must never blame the
+# merchant's account settings.
+IG_UNAVAILABLE_NOT_BUSINESS_NOTE = (
+    "Instagram details unavailable — this profile isn't a Business/Creator account."
+)
+IG_UNAVAILABLE_FETCH_ERROR_NOTE = (
+    "Instagram details couldn't be fetched right now — we'll retry on the next audit."
+)
 
 # Headers a real Chrome navigation sends when typing a URL into the address
 # bar. Instagram now keys its bot heuristics off the presence of Sec-Fetch-*
@@ -108,14 +119,37 @@ async def audit_instagram(business: BusinessInput) -> SectionResult:
 
     url = f"{INSTAGRAM_BASE}/{handle}/"
 
-    # Model A: prefer the Graph API ``business_discovery`` read when configured.
-    # It returns reliable public stats with no login wall; ``None`` means
-    # disabled / unconfigured / unreachable, so we fall through to the scraper.
+    # Model A: prefer the Graph API ``business_discovery`` read. It's server-safe
+    # (authenticated API call, no instagram.com scraping at all).
     if settings.ig_graph_enabled:
-        graph = await fetch_business_discovery(handle)
-        if graph is not None:
-            return _finalize_result(_raw_from_graph(handle, url, graph))
+        result = await discover_business(handle)
+        if result.ok and result.raw is not None:
+            return _finalize_result(_raw_from_graph(handle, url, result.raw))
+        graph_status = result.status  # "not_eligible" | "error"
+    else:
+        graph_status = "error"  # Graph off → treat as "we couldn't ask".
 
+    # Fall back to the anonymous OG-tag scraper ONLY when explicitly enabled.
+    # Off by default so dev behaves like a server: from a datacenter IP that GET
+    # gets rate-limited / CAPTCHA-walled — the exact problem the Graph migration
+    # exists to avoid. See config ``ig_scraper_fallback_enabled``.
+    if settings.ig_scraper_fallback_enabled:
+        return await _audit_instagram_via_scraper(handle, url)
+
+    # No data source: report a clean unavailable state. A ``not_eligible``
+    # verdict is the honest "not a Business account"; anything else is a
+    # transient our-side outage — never blame the merchant's account settings.
+    reason = "not_business_account" if graph_status == "not_eligible" else "fetch_error"
+    return _ig_unavailable(handle, url, reason=reason)
+
+
+async def _audit_instagram_via_scraper(handle: str, url: str) -> SectionResult:
+    """Anonymous OG-tag scrape of a public IG profile (the legacy fallback).
+
+    Gated behind ``ig_scraper_fallback_enabled`` because it hits instagram.com
+    directly and is unreliable from a server IP. Kept for local debugging on a
+    residential IP until a managed scraper (Apify) replaces it.
+    """
     raw: dict[str, Any] = {"handle": handle, "url": url, "source": "og"}
 
     try:
@@ -203,6 +237,60 @@ def _finalize_result(raw: dict[str, Any]) -> SectionResult:
     status = "done" if "followers" in raw and "post_count" in raw else "partial"
     return SectionResult(
         score=score, status=status, raw_data=raw, recommendations=recommendations
+    )
+
+
+def _ig_unavailable(handle: str, url: str, *, reason: str) -> SectionResult:
+    """IG section result when we have no stats and won't scrape for them.
+
+    ``score=None`` so it's excluded from the overall score — we genuinely
+    couldn't measure IG, so it should neither help nor hurt. ``status="partial"``
+    so the dashboard renders it as a neutral note, not an alarming failure. The
+    ``available``/``unavailable_reason``/``note`` keys drive the message on every
+    derived field (card summary, sub-checks, highlight, competitor view).
+    """
+    if reason == "not_business_account":
+        note = IG_UNAVAILABLE_NOT_BUSINESS_NOTE
+        recommendations = [_not_business_rec(handle)]
+    else:
+        note = IG_UNAVAILABLE_FETCH_ERROR_NOTE
+        recommendations = []
+    raw: dict[str, Any] = {
+        "handle": handle,
+        "url": url,
+        "source": "graph",
+        "available": False,
+        "unavailable_reason": reason,
+        "note": note,
+    }
+    return SectionResult(
+        score=None, status="partial", raw_data=raw, recommendations=recommendations
+    )
+
+
+def _not_business_rec(handle: str) -> RecommendationDraft:
+    """Actionable nudge (own-business only — the competitor path discards recs):
+    convert the IG account to Business/Creator so Graph can track it. Framed
+    around the wasted audit credit, since each audit run consumes weekly quota.
+    """
+    return RecommendationDraft(
+        severity="medium",
+        title="Switch your Instagram to a Business or Creator account",
+        body_markdown=(
+            "**Why it matters**\n\n"
+            "We read Instagram stats through Instagram's official API, which only "
+            f"works for **Business** or **Creator** accounts. Because @{handle} is a "
+            "personal account, we can't track your followers, posts, or growth — and "
+            "the audit still spends one of your weekly audit credits to find that out.\n\n"
+            "**How to fix it**\n\n"
+            "1. Open Instagram → **Settings → Account type and tools**.\n"
+            "2. Tap **Switch to professional account** and choose **Business** (or "
+            "**Creator**). It's free and takes about a minute.\n"
+            "3. Re-run the audit — your Instagram presence will be tracked from then on."
+        ),
+        estimated_impact="medium",
+        estimated_time="5 min",
+        fix_target="instagram",
     )
 
 

@@ -125,6 +125,15 @@ class Settings(BaseSettings):
     # Positive-response cache TTL (seconds). Guards the single account's
     # ~200/hr quota against re-audits + weekly competitor refreshes. 0 disables.
     ig_graph_cache_ttl_seconds: float = 21600.0  # 6 hours
+    # OG-tag fallback scraper (anonymous GET on instagram.com). DISABLED by
+    # default so dev behaves like a server: from a datacenter IP that GET gets
+    # rate-limited / CAPTCHA-walled — the exact problem the Graph API migration
+    # exists to avoid — so we deliberately don't fall back to it in production.
+    # When the Graph read can't cover a handle (target isn't a Business/Creator
+    # account), the IG section reports a clean "unavailable" state instead.
+    # Flip on ONLY for local debugging on a residential IP; the proper
+    # production fallback is a managed scraper (Apify), tracked separately.
+    ig_scraper_fallback_enabled: bool = False
     # Meta app credentials. ``meta_app_secret`` (when set) is used at request
     # time for ``appsecret_proof`` and by scripts/ig_token.py to mint/refresh
     # tokens. The app id is public; the secret is server-only — never ship it.

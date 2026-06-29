@@ -195,7 +195,7 @@
           ? Number(competitor.latest_instagram_followers).toLocaleString()
           : null,
       emptyHint: competitor?.instagram_url
-        ? "We'll pick this up on the next weekly refresh."
+        ? "We read Instagram via the official API, which only covers Business/Creator accounts. If this profile is one, it'll appear after the next weekly refresh."
         : "Add this competitor's Instagram URL so we can read it on the next refresh."
     },
     {
@@ -206,7 +206,7 @@
           ? String(competitor.latest_instagram_posts)
           : null,
       emptyHint: competitor?.instagram_url
-        ? "We'll pick this up on the next weekly refresh."
+        ? "We read Instagram via the official API, which only covers Business/Creator accounts. If this profile is one, it'll appear after the next weekly refresh."
         : "Add this competitor's Instagram URL so we can read it on the next refresh."
     }
   ]);

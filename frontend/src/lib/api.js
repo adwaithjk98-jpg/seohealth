@@ -110,6 +110,23 @@ export async function getAuditQuota() {
   return res.json();
 }
 
+/**
+ * Pre-audit probe: can we read this business's Instagram via the Graph API?
+ * Lets us warn the user their IG won't be tracked *before* they spend a
+ * quota-limited audit on it. Returns { handle, eligible, reason, note } where
+ * eligible is true / false / null (unknown). Callers can treat a thrown error
+ * as "unknown" and stay silent.
+ * @param {number} businessId
+ */
+export async function getInstagramEligibility(businessId) {
+  const res = await fetch(
+    `/api/businesses/${businessId}/instagram-eligibility`,
+    { credentials: 'same-origin' }
+  );
+  if (!res.ok) throw new Error(await readJsonError(res));
+  return res.json();
+}
+
 // --- Competitors (Phase 4) --------------------------------------------------
 
 export async function listCompetitors(businessId) {

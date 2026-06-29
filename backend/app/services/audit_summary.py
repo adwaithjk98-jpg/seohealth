@@ -132,6 +132,8 @@ def section_summary(section: str, raw: dict[str, Any] | None) -> str | None:
             return _hostname(url)
         return None
     if section == AuditSectionName.instagram.value:
+        if raw.get("available") is False:
+            return raw.get("note") or "Instagram details unavailable"
         handle = raw.get("handle")
         followers = raw.get("followers")
         if handle and followers is not None:
@@ -334,6 +336,19 @@ def _website_checks(raw: dict[str, Any]) -> list[SubCheck]:
 
 def _instagram_checks(raw: dict[str, Any]) -> list[SubCheck]:
     checks: list[SubCheck] = []
+
+    # No stats and we won't scrape for them — surface the reason as the single
+    # sub-check instead of a wall of "Missing" rows that would imply we looked.
+    if raw.get("available") is False:
+        handle = raw.get("handle")
+        return [
+            SubCheck(
+                label=f"@{handle}" if handle else "Instagram",
+                status="info",
+                value="Details unavailable",
+                detail=raw.get("note"),
+            )
+        ]
 
     handle = raw.get("handle")
     if handle:

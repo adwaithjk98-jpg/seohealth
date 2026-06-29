@@ -22,6 +22,8 @@ from app.services.audit_summary import grade_from_score
 from app.services.audit_view import TREND_THRESHOLD
 from app.services.auto_audit import allowed_cadences, next_auto_audit_at
 from app.services.pillar_optout import enabled_pillars
+from scrapers.ig_graph import discover_business
+from scrapers.instagram import IG_UNAVAILABLE_NOT_BUSINESS_NOTE
 
 router = APIRouter()
 
@@ -292,6 +294,44 @@ def get_business(
     if biz is None or biz.user_id != user.id or biz.archived_at is not None:
         raise HTTPException(status_code=404, detail="business not found")
     return _to_response(db, biz, user)
+
+
+@router.get("/businesses/{business_id}/instagram-eligibility")
+async def get_instagram_eligibility(
+    business_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict[str, object | None]:
+    """Cheap pre-audit probe: can we read this business's IG via the Graph API?
+
+    Lets the UI warn *before* the user spends a (quota-limited) audit on a
+    handle whose stats we can't fetch. Uses ``business_discovery`` (cached 6h,
+    no audit-quota cost). Returns ``eligible``:
+    - ``True``  → it's a Business/Creator account; IG will be tracked.
+    - ``False`` → not a Business/Creator account (show the nudge). ``note`` set.
+    - ``None``  → unknown (no handle, or a transient Graph/token error) — the
+      caller should stay silent rather than guess.
+    """
+    biz = db.get(Business, business_id)
+    if biz is None or biz.user_id != user.id or biz.archived_at is not None:
+        raise HTTPException(status_code=404, detail="business not found")
+
+    handle = (biz.ig_handle or "").strip().lstrip("@") or None
+    if not handle:
+        return {"handle": None, "eligible": None, "reason": "no_handle", "note": None}
+
+    result = await discover_business(handle)
+    if result.ok:
+        return {"handle": handle, "eligible": True, "reason": None, "note": None}
+    if result.status == "not_eligible":
+        return {
+            "handle": handle,
+            "eligible": False,
+            "reason": "not_business_account",
+            "note": IG_UNAVAILABLE_NOT_BUSINESS_NOTE,
+        }
+    # Transient our-side error (token/rate/network) — don't claim anything.
+    return {"handle": handle, "eligible": None, "reason": "fetch_error", "note": None}
 
 
 @router.delete(

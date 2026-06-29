@@ -83,6 +83,8 @@ def _website_highlight(curr: dict[str, Any], prev: dict[str, Any]) -> str | None
 
 
 def _instagram_highlight(curr: dict[str, Any], prev: dict[str, Any]) -> str | None:
+    if curr.get("available") is False:
+        return curr.get("note")
     curr_followers = curr.get("followers")
     prev_followers = prev.get("followers")
     if isinstance(curr_followers, int) and isinstance(prev_followers, int):

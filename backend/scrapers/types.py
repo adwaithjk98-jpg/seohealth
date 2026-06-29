@@ -43,7 +43,10 @@ class RecommendationDraft:
 
 @dataclass
 class SectionResult:
-    score: int
+    # ``None`` when the section couldn't be measured at all (e.g. IG account
+    # isn't a Business/Creator profile) — excluded from the overall score so it
+    # neither helps nor hurts, rather than scored 0.
+    score: int | None
     status: str
     raw_data: dict[str, Any]
     recommendations: list[RecommendationDraft] = field(default_factory=list)

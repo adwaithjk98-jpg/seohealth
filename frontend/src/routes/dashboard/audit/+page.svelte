@@ -5,7 +5,12 @@
   import { quintOut } from 'svelte/easing';
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
-  import { getAuditQuota, setBusinessSchedule, startAudit } from '$lib/api.js';
+  import {
+    getAuditQuota,
+    getInstagramEligibility,
+    setBusinessSchedule,
+    startAudit
+  } from '$lib/api.js';
   import { formatRelativeTime } from '$lib/dashboard.js';
   import { PRO, MAX } from '$lib/tiers.js';
 
@@ -139,6 +144,25 @@
     }
   }
 
+  // --- Pre-audit Instagram eligibility ---
+  // Probe (cheap — Graph-cached, no audit-quota cost) so we can warn a user
+  // their IG won't be tracked BEFORE they spend a weekly audit credit on it.
+  /** @type {Record<number, { eligible: boolean | null, note: string | null }>} */
+  let igElig = $state({});
+
+  async function loadIgEligibility() {
+    for (const biz of businesses) {
+      if (!biz.ig_handle || biz.id in igElig) continue;
+      try {
+        const res = await getInstagramEligibility(biz.id);
+        igElig = { ...igElig, [biz.id]: { eligible: res.eligible, note: res.note } };
+      } catch {
+        // Unknown — stay silent rather than guess.
+        igElig = { ...igElig, [biz.id]: { eligible: null, note: null } };
+      }
+    }
+  }
+
   $effect(() => {
     if (authState.loaded && authState.user) {
       loadQuota();
@@ -149,7 +173,9 @@
     if (!authState.loaded) await loadCurrentUser();
     if (!authState.user || data?.error === 'unauthenticated') {
       await goto('/login', { replaceState: true });
+      return;
     }
+    loadIgEligibility();
   });
 </script>
 
@@ -413,6 +439,16 @@
                     <span>· Last audit {formatRelativeTime(biz.latest_audit_finished_at)}</span>
                   {/if}
                 </div>
+                {#if igElig[biz.id]?.eligible === false}
+                  <p
+                    class="mt-2 rounded-xl bg-attention-50 px-3 py-2 text-xs leading-relaxed text-attention-700"
+                    in:fade={{ duration: 160 }}
+                  >
+                    {igElig[biz.id].note} Switch it to a Business or Creator account to
+                    track Instagram — running an audit now won't include it and still
+                    uses a credit.
+                  </p>
+                {/if}
                 {#if runError[biz.id]}
                   <p class="mt-2 text-xs text-action-700">{runError[biz.id]}</p>
                 {/if}
