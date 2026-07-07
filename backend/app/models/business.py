@@ -21,6 +21,10 @@ class Business(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     maps_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Resolved Places API (New) id for the Maps listing. Lazily backfilled by
+    # the Maps audit (null-only) so recurring audits read the exact listing via
+    # a cheap Place Details call instead of re-searching by name+city.
+    google_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     website: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     ig_handle: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str] = mapped_column(String(255), nullable=False)

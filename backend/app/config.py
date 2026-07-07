@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     pagespeed_strategy: str = "mobile"
     pagespeed_timeout_seconds: float = 60.0
 
+    # Places API (New) — the Google Cloud API that replaces the Selenium
+    # ``maps.py`` scraper (Maps pillar + competitor refresh via Place Details,
+    # discovery via Text Search). Key from GCP project "seohealth", restricted
+    # to Places API (New). Empty until the maps → Places migration ships; the
+    # HTTP client will read this via ``settings.places_api_key``.
+    places_api_key: str = ""
+
     # Instagram Graph API — Model A: ``business_discovery`` reads PUBLIC stats
     # for any IG Business/Creator handle using ONE server-side token (our own
     # @seo.health account). Powers both the user's own IG audit section and

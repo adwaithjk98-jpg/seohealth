@@ -18,6 +18,9 @@ class BusinessInput:
     maps_url: str | None = None
     website: str | None = None
     ig_handle: str | None = None
+    # Stored Places API (New) id, when we've resolved one. Lets the Maps audit
+    # skip the name+city search and read the exact listing via Place Details.
+    google_place_id: str | None = None
 
 
 @dataclass

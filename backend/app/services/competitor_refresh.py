@@ -11,7 +11,7 @@ Design notes
   read-side TTL in ``competitor_cache.CACHE_TTL_DAYS`` (7d). That way the
   cache always has a fresh entry by the time a real audit asks for it —
   if we refreshed at exactly 7 days, the very next audit would see a cache
-  miss and fall back to the in-line Selenium scrape on the user's clock.
+  miss and fall back to the in-line Places API fetch on the user's clock.
 * Deduplication is keyed on the *normalized* maps_url. Two users tracking
   the same listing produce one refresh job between them — which is the
   whole point of the global cache.

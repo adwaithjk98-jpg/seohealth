@@ -3,11 +3,10 @@
 Two kinds of work land here:
 
 * ``refresh_cache_job(cache_key, maps_url)`` — fired by the daily cron in
-  ``services.competitor_refresh``. Scrapes one Maps URL with the in-process
-  Selenium fetcher and UPSERTs the result into ``competitor_metric_cache``.
-  No observations are written: observations belong to an audit, and the
-  whole point of the cache is to let the *next* audit serve this URL for
-  free instead of re-scraping.
+  ``services.competitor_refresh``. Fetches one listing via the Places API (New)
+  and UPSERTs the result into ``competitor_metric_cache``. No observations are
+  written: observations belong to an audit, and the whole point of the cache is
+  to let the *next* audit serve this URL for free instead of re-fetching.
 
 * ``discovery_scan_job(scan_id)`` — fired by the API when a paid user kicks
   off a Discovery Scan. Loads the ``discovery_scans`` row, shells out to
@@ -30,10 +29,7 @@ from app.models import Business, Competitor, CompetitorObservation, DiscoverySca
 from app.models.enums import DiscoveryScanStatus
 from app.services import push_service
 from app.services.competitor_cache import normalize_maps_url, upsert_metric_cache
-from app.services.competitor_scraper_adapter import (
-    CompetitorScraperError,
-    run_competitor_scrape,
-)
+from app.services.discovery import DiscoveryError, discover_competitors
 from scrapers import audit_instagram, fetch_competitor_metrics
 from scrapers.maps import CompetitorScrapeTarget
 from scrapers.types import BusinessInput
@@ -135,9 +131,13 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
         # tracked nearby by definition).
         search_name: str | None = None
         search_city: str | None = None
+        search_place_id: str | None = None
         if matching:
             first = matching[0]
             search_name = first.name
+            # All rows sharing this cache_key are the same listing, so any
+            # stored place_id resolves it directly (cheap Place Details).
+            search_place_id = first.google_place_id
             # Lazy-load the parent business for the city.
             parent = db.get(Business, first.business_id) if first.business_id else None
             if parent is not None:
@@ -148,6 +148,7 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
             maps_url=maps_url,
             name=search_name,
             city=search_city,
+            google_place_id=search_place_id,
         )
         metrics = asyncio.run(fetch_competitor_metrics([target]))
         if not metrics:
@@ -175,6 +176,8 @@ def refresh_cache_job(cache_key: str, maps_url: str) -> dict[str, str | float | 
                 comp.website_url = metric.website_url
             if not comp.instagram_url and getattr(metric, "instagram_url", None):
                 comp.instagram_url = metric.instagram_url
+            if not comp.google_place_id and getattr(metric, "google_place_id", None):
+                comp.google_place_id = metric.google_place_id
             ig_followers, ig_posts = asyncio.run(
                 _ig_metrics_for_url(comp.instagram_url)
             )
@@ -339,17 +342,17 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
         fields = scan.fields_csv.split(",") if scan.fields_csv else ["name"]
 
         try:
-            result = asyncio.run(
-                run_competitor_scrape(
+            results = asyncio.run(
+                discover_competitors(
                     query=scan.query,
                     num_leads=scan.num_leads,
                     fields=fields,
                     filters=scan.filters or None,
                 )
             )
-        except CompetitorScraperError as exc:
+        except DiscoveryError as exc:
             logger.exception(
-                "discovery_scan_job: scraper error for scan_id=%s", scan_id
+                "discovery_scan_job: discovery error for scan_id=%s", scan_id
             )
             scan.status = DiscoveryScanStatus.failed
             scan.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -357,7 +360,7 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
             db.commit()
             raise
 
-        filtered = _filter_out_own_roster(db, scan.user_id, result.results)
+        filtered = _filter_out_own_roster(db, scan.user_id, results)
         scan.status = DiscoveryScanStatus.done
         scan.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
         scan.result_count = len(filtered)
@@ -368,7 +371,7 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
             "scan_id": scan_id,
             "status": "done",
             "result_count": len(filtered),
-            "dropped_self": len(result.results) - len(filtered),
+            "dropped_self": len(results) - len(filtered),
         }
     except Exception:
         # Catch-all: ensure no row stays at ``running`` if anything unusual

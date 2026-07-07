@@ -15,10 +15,18 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 
-from scrapers.driver import DEFAULT_USER_AGENT
 from scrapers.types import BusinessInput, RecommendationDraft, SectionResult
 
 logger = logging.getLogger(__name__)
+
+# Desktop Chrome UA for the static HTML fetch — some sites gate a bare httpx
+# client. (Relocated here when the Selenium driver module was removed; this is
+# the module's only remaining consumer.)
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
 REQUEST_TIMEOUT_S = 15.0
 MAX_BYTES = 1_500_000  # plenty for parsing the <head>; we don't need full pages

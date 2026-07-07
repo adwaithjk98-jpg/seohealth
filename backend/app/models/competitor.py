@@ -26,6 +26,9 @@ class Competitor(Base):
     # discovers them from the Maps listing when omitted.
     instagram_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     website_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Resolved Places API (New) id, backfilled by the competitor refresh job so
+    # future refreshes read the exact listing via a cheap Place Details call.
+    google_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     added_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

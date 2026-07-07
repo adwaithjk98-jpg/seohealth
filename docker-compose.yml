@@ -31,9 +31,6 @@ x-backend-env: &backend-env
   SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
   SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-session}
   SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-  AUDIT_MAX_CONCURRENT_DRIVERS: ${AUDIT_MAX_CONCURRENT_DRIVERS:-1}
-  AUDIT_PAGE_TIMEOUT: ${AUDIT_PAGE_TIMEOUT:-30}
-  AUDIT_SCRIPT_TIMEOUT: ${AUDIT_SCRIPT_TIMEOUT:-20}
   # Razorpay (Test Mode for Phase 3). Empty key id ⇒ in-app mock checkout
   # — the no-cost path used by the prompt-block builds. See backend/.env.example
   # for the full var list and what each one gates.
@@ -119,10 +116,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Chromium uses /dev/shm for IPC buffers and crashes on Docker's default
-    # 64MB. 1GB is the actual fix for the --disable-dev-shm-usage workaround
-    # baked into scrapers/driver.py.
-    shm_size: "1gb"
     networks:
       - audithealth-net
 
@@ -138,15 +131,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Worker is where Chromium actually runs — this is the load-bearing copy.
-    shm_size: "1gb"
     networks:
       - audithealth-net
 
   competitor-worker:
     # Low-priority queue: competitor cache refreshes + Discovery Scans. Reuses
-    # the api image (single build). Runs Chromium for competitor scrapes, so it
-    # needs the same 1GB /dev/shm as the audit worker.
+    # the api image (single build). Competitor refreshes now hit the Places API
+    # (New) over HTTP — no Chromium. (Discovery still shells out to the separate
+    # audit_scraper engine; migrating that is the follow-up Part B.)
     image: audithealth-backend:dev
     command: ["python", "-m", "scripts.run_competitor_worker"]
     environment: *backend-env
@@ -155,14 +147,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    shm_size: "1gb"
     networks:
       - audithealth-net
 
   scheduler:
     # rq-scheduler: enqueues auto-audits, the weekly digest, competitor
-    # refreshes, and data pruning on cron. No Chromium here — it only enqueues
-    # jobs the workers run, so no /dev/shm bump needed.
+    # refreshes, and data pruning on cron. It only enqueues jobs the workers
+    # run.
     image: audithealth-backend:dev
     command: ["python", "-m", "scripts.run_scheduler"]
     environment: *backend-env

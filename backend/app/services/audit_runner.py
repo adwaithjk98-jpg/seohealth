@@ -47,7 +47,9 @@ logger = logging.getLogger(__name__)
 # Fields a scraper is allowed to fill in on the Business row mid-pipeline.
 # Anything outside this allowlist is ignored — keeps a misbehaving scraper
 # from quietly mutating user-owned columns (city, name, etc.).
-_DISCOVERABLE_FIELDS: frozenset[str] = frozenset({"website", "ig_handle"})
+_DISCOVERABLE_FIELDS: frozenset[str] = frozenset(
+    {"website", "ig_handle", "google_place_id"}
+)
 
 ScraperFn = Callable[[BusinessInput], Awaitable[SectionResult]]
 
@@ -100,6 +102,7 @@ def _to_business_input(business: Business) -> BusinessInput:
         maps_url=business.maps_url,
         website=business.website,
         ig_handle=business.ig_handle,
+        google_place_id=business.google_place_id,
     )
 
 

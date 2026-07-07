@@ -4,26 +4,13 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    CHROME_BINARY=/usr/bin/chromium \
-    CHROMEDRIVER_PATH=/usr/bin/chromedriver
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Chromium + chromedriver from Debian's apt repo (matched pair, no version
-# skew). Selenium 4.6+'s built-in driver manager picks them up automatically,
-# so no CHROME_BINARY / CHROMEDRIVER_PATH overrides are needed at runtime.
+# No Chromium anymore — Maps moved to the Places API (New) over httpx, so the
+# only OS-level need is CA certs for outbound TLS to the Google/Meta/Resend
+# APIs. (psycopg[binary] + lxml bundle their own native libs via wheels.)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        chromium \
-        chromium-driver \
-        fonts-liberation \
-        libnss3 \
-        libxss1 \
-        libasound2 \
-        libgbm1 \
-        libgtk-3-0 \
-        libxkbcommon0 \
-        libdrm2 \
-        ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

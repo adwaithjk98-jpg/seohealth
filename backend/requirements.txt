@@ -4,13 +4,7 @@ sqlalchemy==2.0.36
 alembic==1.14.0
 pydantic==2.10.4
 pydantic-settings==2.7.0
-selenium==4.27.1
-# Wired in (USE_UNDETECTED_CHROMEDRIVER=true) for future stealth work
-# on Google Maps' review-count strip — stock undetected-chromedriver
-# alone doesn't solve it on either headless or visible Chrome, so the
-# default is plain Selenium. Pair this with a persistent profile and/
-# or residential proxy when reviving the work.
-undetected-chromedriver==3.5.5
+# Maps is now the Places API (New) over httpx — no Selenium/Chromium anywhere.
 httpx==0.28.1
 beautifulsoup4==4.12.3
 lxml==5.3.0
