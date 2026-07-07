@@ -212,13 +212,15 @@
   }
 </script>
 
+<svelte:head><title>SEO Health — a calm health check for your business</title></svelte:head>
+
 <section class="grid gap-10 lg:grid-cols-[1.1fr_1fr] lg:items-center">
   <div>
     <p
       class="inline-flex items-center gap-2 rounded-full border border-healthy-100 bg-healthy-50 px-3 py-1 text-xs font-medium text-healthy-700"
     >
       <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
-      Free during the beta
+      Free health check · no card needed
     </p>
     <h1 class="mt-4 text-4xl font-semibold tracking-tight text-canvas-ink sm:text-5xl">
       Let's give your business a quick health check.

@@ -264,6 +264,8 @@
   });
 </script>
 
+<svelte:head><title>Market comparison · SEO Health</title></svelte:head>
+
 <section class="space-y-6">
   <header>
     <a class="btn-ghost -ml-2 text-xs" href="/dashboard/competitors">← Back to hub</a>

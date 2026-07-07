@@ -179,6 +179,8 @@
   });
 </script>
 
+<svelte:head><title>Competitors · SEO Health</title></svelte:head>
+
 <section class="space-y-8">
   {#if errorMessage}
     <div

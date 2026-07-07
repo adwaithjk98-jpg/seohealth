@@ -1,6 +1,6 @@
 {
-  "name": "Local SEO Health Monitor",
-  "short_name": "AuditHealth",
+  "name": "SEO Health",
+  "short_name": "SEO Health",
   "description": "A calm dashboard for your business's online presence.",
   "start_url": "/dashboard",
   "scope": "/",

@@ -230,6 +230,8 @@
   }
 </script>
 
+<svelte:head><title>Health check · SEO Health</title></svelte:head>
+
 <section class="mx-auto max-w-2xl">
   <header class="text-center">
     <p

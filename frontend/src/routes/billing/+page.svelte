@@ -105,7 +105,7 @@
       const rzp = new RazorpayCtor({
         key: checkout.razorpay_key_id,
         subscription_id: checkout.razorpay_subscription_id,
-        name: 'Local SEO Health Monitor',
+        name: 'SEO Health',
         description:
           planTier === 'max'
             ? 'Max plan — multi-location monitoring, up to 10 businesses'
@@ -160,6 +160,8 @@
     }
   }
 </script>
+
+<svelte:head><title>Billing & plan · SEO Health</title></svelte:head>
 
 <section class="space-y-8">
   <header>
@@ -311,7 +313,7 @@
             {/if}
 
             <h3 class="mt-3 text-2xl font-semibold tracking-tight text-canvas-ink">
-              AuditHealth
+              SEO Health
               <span class={selected === 'max' ? 'text-attention-700' : 'text-healthy-700'}>
                 {selectedMeta.name}
               </span>

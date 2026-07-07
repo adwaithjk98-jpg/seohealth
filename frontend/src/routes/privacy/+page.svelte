@@ -7,7 +7,7 @@
 </script>
 
 <svelte:head>
-  <title>Privacy Policy · AuditHealth</title>
+  <title>Privacy Policy · SEO Health</title>
 </svelte:head>
 
 <article class="prose-legal mx-auto max-w-2xl space-y-6">
@@ -24,7 +24,7 @@
   </header>
 
   <p class="text-sm leading-relaxed text-canvas-muted">
-    AuditHealth ("we", "us") helps small businesses see and improve how they show up online. This
+    SEO Health ("we", "us") helps small businesses see and improve how they show up online. This
     policy explains what we collect, why, and the control you have over it.
   </p>
 
@@ -77,7 +77,7 @@
   <section class="space-y-2">
     <h2 class="text-lg font-semibold text-canvas-ink">Who we share it with</h2>
     <p class="text-sm leading-relaxed text-canvas-ink">
-      Only the service providers needed to run AuditHealth: <strong>Razorpay</strong> (payments),
+      Only the service providers needed to run SEO Health: <strong>Razorpay</strong> (payments),
       <strong>Resend</strong> (sending email), and <strong>Google</strong> (the public Maps data we
       read, and the Places API as we grow). Each processes data only to provide their service to us.
     </p>

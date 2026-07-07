@@ -7,7 +7,7 @@
 </script>
 
 <svelte:head>
-  <title>Refund Policy · AuditHealth</title>
+  <title>Refund Policy · SEO Health</title>
 </svelte:head>
 
 <article class="mx-auto max-w-2xl space-y-6">

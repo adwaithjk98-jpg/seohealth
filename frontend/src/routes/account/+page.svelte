@@ -23,8 +23,7 @@
 
   let ready = $state(false);
 
-  // TODO(launch): swap to a real domain support address (e.g. hello@yourdomain.in).
-  const supportEmail = 'hello@yourdomain.in';
+  const supportEmail = 'hello@seohealth.in';
   const appVersion = '0.1.0';
 
   onMount(async () => {
@@ -164,7 +163,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `audithealth-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `seohealth-export-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -198,6 +197,8 @@
     }
   }
 </script>
+
+<svelte:head><title>Account · SEO Health</title></svelte:head>
 
 <section class="space-y-8">
   <header>
@@ -495,7 +496,7 @@
     <!-- About -->
     <div class="card p-6 sm:p-8">
       <p class="text-xs uppercase tracking-wide text-canvas-muted">About</p>
-      <p class="mt-1 text-sm text-canvas-ink">AuditHealth · v{appVersion}</p>
+      <p class="mt-1 text-sm text-canvas-ink">SEO Health · v{appVersion}</p>
       <p class="mt-1 text-xs text-canvas-muted">A calm dashboard for your business's online presence.</p>
     </div>
   {/if}

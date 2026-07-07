@@ -6,7 +6,7 @@
 </script>
 
 <svelte:head>
-  <title>Terms of Service · AuditHealth</title>
+  <title>Terms of Service · SEO Health</title>
 </svelte:head>
 
 <article class="mx-auto max-w-2xl space-y-6">
@@ -23,14 +23,14 @@
   </header>
 
   <p class="text-sm leading-relaxed text-canvas-muted">
-    These terms govern your use of AuditHealth. By creating an account or using the service, you
+    These terms govern your use of SEO Health. By creating an account or using the service, you
     agree to them.
   </p>
 
   <section class="space-y-2">
     <h2 class="text-lg font-semibold text-canvas-ink">1. What the service does</h2>
     <p class="text-sm leading-relaxed text-canvas-ink">
-      AuditHealth assesses how a business appears online — its Google&nbsp;Maps listing, website and
+      SEO Health assesses how a business appears online — its Google&nbsp;Maps listing, website and
       Instagram — and gives a score, findings and recommendations, with optional competitor tracking
       and scheduled re-checks. It is an informational tool. We don't guarantee any particular search
       ranking, traffic or business result.
@@ -81,7 +81,7 @@
     <p class="text-sm leading-relaxed text-canvas-ink">
       Your business information and audit history are yours — see the
       <a class="text-healthy-700 hover:underline" href="/privacy">Privacy Policy</a> for how we
-      handle them. The AuditHealth software, design and branding are ours; these terms don't grant
+      handle them. The SEO Health software, design and branding are ours; these terms don't grant
       you any rights in them beyond using the service.
     </p>
   </section>

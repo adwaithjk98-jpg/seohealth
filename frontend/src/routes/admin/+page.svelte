@@ -46,6 +46,8 @@
   const inr = (/** @type {number} */ n) => '₹' + n.toLocaleString('en-IN');
 </script>
 
+<svelte:head><title>Stats · SEO Health</title></svelte:head>
+
 <section class="space-y-6">
   <header>
     <p

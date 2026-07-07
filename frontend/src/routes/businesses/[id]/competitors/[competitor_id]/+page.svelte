@@ -236,6 +236,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>{competitor?.name ?? 'Competitor'} · SEO Health</title>
+</svelte:head>
+
 <section class="space-y-6">
   <header class="space-y-2">
     <a class="btn-ghost -ml-2 text-xs" href="/dashboard/competitors">← Back to hub</a>

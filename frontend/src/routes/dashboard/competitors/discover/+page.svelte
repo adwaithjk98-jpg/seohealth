@@ -535,6 +535,8 @@
   });
 </script>
 
+<svelte:head><title>Discover competitors · SEO Health</title></svelte:head>
+
 <section class="space-y-6">
   <header class="flex items-center justify-between gap-3">
     <div>

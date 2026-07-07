@@ -52,6 +52,8 @@
   });
 </script>
 
+<svelte:head><title>Insights · SEO Health</title></svelte:head>
+
 <section class="space-y-6">
   <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back</a>
 

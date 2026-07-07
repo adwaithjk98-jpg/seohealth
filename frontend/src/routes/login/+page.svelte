@@ -50,6 +50,8 @@
   }
 </script>
 
+<svelte:head><title>Sign in · SEO Health</title></svelte:head>
+
 <section class="mx-auto max-w-md">
   <header class="text-center">
     <p

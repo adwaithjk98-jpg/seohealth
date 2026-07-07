@@ -84,6 +84,8 @@
   };
 </script>
 
+<svelte:head><title>Home · SEO Health</title></svelte:head>
+
 <section class="space-y-8">
   <header>
     <p

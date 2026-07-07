@@ -179,6 +179,8 @@
   });
 </script>
 
+<svelte:head><title>Audits · SEO Health</title></svelte:head>
+
 <section class="space-y-8">
   <header>
     <span

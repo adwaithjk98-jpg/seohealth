@@ -143,6 +143,10 @@
   };
 </script>
 
+<svelte:head>
+  <title>{section?.label ?? 'Section'} · SEO Health</title>
+</svelte:head>
+
 {#if loading}
   <section class="space-y-8" aria-busy="true" aria-live="polite">
     <span class="sr-only">Loading this section…</span>

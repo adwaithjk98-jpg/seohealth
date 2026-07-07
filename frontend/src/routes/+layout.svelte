@@ -147,8 +147,7 @@
           </svg>
         </span>
         <span class="truncate text-sm font-semibold tracking-tight sm:text-base">
-          <span class="sm:hidden">SEO Health</span>
-          <span class="hidden sm:inline">Local SEO Health</span>
+          SEO Health
         </span>
       </a>
 

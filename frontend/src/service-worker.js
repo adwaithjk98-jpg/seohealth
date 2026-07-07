@@ -20,7 +20,7 @@ const sw = /** @type {ServiceWorkerGlobalScope & typeof globalThis} */ (
   /** @type {unknown} */ (self)
 );
 
-const CACHE = `audithealth-${version}`;
+const CACHE = `seohealth-${version}`;
 const SHELL = '/'; // adapter-static fallback is index.html, served at /
 const PRECACHE = [SHELL, ...build, ...files];
 

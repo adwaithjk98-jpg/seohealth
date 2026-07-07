@@ -189,6 +189,10 @@
   }
 </script>
 
+<svelte:head>
+  <title>{business?.name ?? audit?.business?.name ?? 'Your business'} · SEO Health</title>
+</svelte:head>
+
 {#snippet scheduleLine()}
   <!-- Compact, read-only summary. Cadence is owned by the Audit tab —
        tapping "Manage" deep-links over so users have one place to
