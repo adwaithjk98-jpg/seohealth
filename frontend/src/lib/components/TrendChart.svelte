@@ -62,11 +62,13 @@
     return /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
   }
 
-  // Soft palette pulled from the existing tailwind tokens — competitor lines
-  // need to be visually distinct from the user's own line without screaming.
+  // Competitor lines need to be visually distinct from the user's own line
+  // without screaming. First two are the app's own attention/action tokens;
+  // indigo and sky are borrowed outsiders (the brand palette has no cool
+  // hues) kept purely for series separability.
   const COMPETITOR_PALETTE = [
-    '#f59e0b', // attention-500
-    '#fb7185', // action-400
+    '#c69423', // attention-500
+    '#e2735a', // action-400
     '#6366f1', // indigo-500
     '#0ea5e9', // sky-500
   ];
@@ -82,8 +84,8 @@
       {
         label: businessName,
         data: businessPoints,
-        borderColor: '#10b981', // healthy-500
-        backgroundColor: 'rgba(16, 185, 129, 0.12)',
+        borderColor: '#4f8c5b', // healthy-500 (the real token, not Tailwind emerald)
+        backgroundColor: 'rgba(79, 140, 91, 0.12)',
         borderWidth: 2.5,
         pointRadius: 4,
         pointHoverRadius: 6,

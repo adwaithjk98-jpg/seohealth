@@ -153,7 +153,12 @@
     try {
       const audit = await getAudit(auditId);
       if (audit.status === 'done') {
-        await goto(`/audits/${auditId}/dashboard`, { replaceState: true });
+        // Straight to the canonical business view — /audits/{id}/dashboard
+        // is a redirect kept only for old bookmarks.
+        const target = audit.business?.id
+          ? `/businesses/${audit.business.id}`
+          : `/audits/${auditId}/dashboard`;
+        await goto(target, { replaceState: true });
         return 'terminal';
       }
       if (audit.status === 'failed') {
@@ -219,7 +224,11 @@
   });
 
   function viewDashboard() {
-    goto(`/audits/${auditId}/dashboard`);
+    if (business?.id) {
+      goto(`/businesses/${business.id}`);
+    } else {
+      goto(`/audits/${auditId}/dashboard`);
+    }
   }
 
   function scoreLabel(score) {

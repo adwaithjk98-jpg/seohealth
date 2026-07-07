@@ -61,8 +61,8 @@
 
   // Chart-line palette must match TrendChart.svelte exactly — these are
   // the colors the pills' dots reference.
-  const BUSINESS_COLOR = '#10b981';
-  const COMPETITOR_PALETTE = ['#f59e0b', '#fb7185', '#6366f1', '#0ea5e9'];
+  const BUSINESS_COLOR = '#4f8c5b';
+  const COMPETITOR_PALETTE = ['#c69423', '#e2735a', '#6366f1', '#0ea5e9'];
 
   /**
    * Flat ordered list of every chartable entity, with stable ids + the

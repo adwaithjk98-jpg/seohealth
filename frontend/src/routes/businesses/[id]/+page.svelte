@@ -155,6 +155,29 @@
     }
   }
 
+  /** Start the first audit from the ``no_audit`` empty state, where
+   *  ``audit`` is null so the id comes off the route. Shares the
+   *  reauditing/reauditError state — the two flows never coexist. */
+  async function handleStartById(/** @type {number} */ id) {
+    if (!id || reauditing) return;
+    reauditing = true;
+    reauditError = null;
+    try {
+      const next = await startAudit(id);
+      await goto(`/audits/${next.audit_id}`);
+    } catch (err) {
+      if (err instanceof Error) {
+        const match = err.message.match(/running_audit_id["\s:]+(\d+)/);
+        if (match) {
+          await goto(`/audits/${match[1]}`);
+          return;
+        }
+      }
+      reauditError = err instanceof Error ? err.message : 'Could not start your health check.';
+      reauditing = false;
+    }
+  }
+
   async function handleReaudit() {
     if (!audit?.business?.id || reauditing) return;
     reauditing = true;
@@ -263,11 +286,25 @@
       <p class="text-3xl">🪴</p>
       <h1 class="mt-3 text-lg font-semibold text-canvas-ink">No health check yet</h1>
       <p class="mt-2 text-sm text-canvas-muted">
-        We haven't run a check for this business yet. Kick one off from the home page —
-        it usually takes about 5 minutes and we'll walk you through every step.
+        We haven't run a check for this business yet. The first one takes about 5 minutes —
+        we'll walk you through every step as it runs.
       </p>
+      {#if reauditError}
+        <p class="mt-3 rounded-xl bg-action-50 px-3 py-2 text-xs text-action-700" role="alert">
+          {reauditError}
+        </p>
+      {/if}
       <div class="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
-        <a class="btn-primary" href="/">Run a health check</a>
+        <!-- Direct start. The old CTA pointed at "/", which redirects
+             signed-in users straight back to /dashboard — a dead loop. -->
+        <button
+          type="button"
+          class="btn-primary"
+          onclick={() => handleStartById(businessId)}
+          disabled={reauditing}
+        >
+          {reauditing ? 'Starting…' : 'Run a health check'}
+        </button>
         <a class="btn-ghost" href="/dashboard">Back to dashboard</a>
       </div>
       <button
