@@ -101,3 +101,61 @@ dead-ends on a phone.
 discovery flow, market matrix, billing switcher, account page, auth flow, tier
 gating, loaders/API layer, legal *content* (name swap in titles only), the
 marketing site in `site/`.
+
+---
+
+## What actually changed (changelog, in commit order)
+
+1. **Bug fixes** (`977e15f`) — invisible Weekly-Insights trajectory bars
+   (percentage heights in auto-height flex columns → explicit px); ScoreGauge
+   said the trend direction twice; "Your four health pillars" hardcoded while
+   five render; business h1 greeted the cafe instead of the owner; audit-done
+   banner whitespace ("in— checked"); `inline code` in recommendation bodies
+   rendered as literal backticks; deleted unused `CompetitorsSection.svelte`.
+2. **One name everywhere** (`2b60f75`) — SEO Health across html title,
+   apple-touch title, PWA manifest, header, billing card, Razorpay checkout
+   label, account About, export filename, SW cache prefix, legal name
+   mentions. Every route now sets a real `<title>`. Landing pill no longer
+   claims "Free during the beta"; support address is hello@seohealth.in.
+3. **Status-first home** (`ff7168d`) — single-business users (every Free/Pro
+   account) open to a hero card: score ring + trend delta, "since your last
+   check" line, tinted pillar chips, tap-through to the full view; a "your one
+   move this week" card deep-links the top fix; Weekly-Insights + all-insights
+   fold into one row. Running audit → live-watch hero; no audit yet → first
+   check starts from the home. Multi-business keeps the grid with an
+   aggregate header line. One bounded latest-audit fetch in `+page.js`,
+   graceful fallback to the old card view on failure.
+4. **Mobile bottom tab bar** (`e1e8bd6`) — persistent Home/Audits/Competitors
+   on every signed-in surface below `sm`, safe-area aware; desktop keeps the
+   dashboard pill; header home icon hidden on mobile; discover toast lifted
+   above the bar; "Back to your businesses" → "Back home".
+5. **One canonical dashboard + palette + dead-loop fix** (`b346d60`) —
+   `/audits/{id}/dashboard` (280-line drifting copy of `/businesses/{id}`)
+   is now a redirect that keeps old bookmarks alive; live-audit screen links
+   straight to the business view. Chart lines now use the app's actual
+   tokens (sage, not Tailwind emerald). "Run a health check" on a no-audit
+   business no longer bounces through "/" back to the dashboard — it starts
+   the audit directly.
+
+**Verification**: `npm run build` passes; `svelte-check` went from 138
+pre-existing errors to 124 (nothing added, duplicate page's noise removed);
+every flow re-clicked at 390×844 (home single+multi, business, section +
+finding modal, redirect, weekly insights, competitors, billing, landing).
+
+## Honest notes / what I'd do next
+
+- **svelte-check is not green and never was** — 124 pre-existing type errors
+  remain (mostly `any`-indexing in older pages). Worth a dedicated pass.
+- **Backend gaps designed around**: none of this pass depends on new backend;
+  the home hero reuses the existing latest-audit endpoint. The Places
+  migration branch's backend changes are untouched and uncommitted, as found.
+- **Legal pages** got a brand-name swap only; the policies are still
+  placeholders and still need real content before launch.
+- **`.prose` classes in FindingModal do nothing** (no typography plugin
+  installed) — harmless today because the structured WHY/HOW path renders
+  first; either install the plugin or drop the classes.
+- **Next, in order of value**: (1) surface the trajectory sparkline on the
+  home hero too, (2) a real `<meta name="description">` + OG tags for the
+  landing, (3) type-error cleanup pass, (4) consider tinting indigo/sky
+  competitor chart hues toward the brand once there are ≥3 competitors in
+  the wild to test separability.
