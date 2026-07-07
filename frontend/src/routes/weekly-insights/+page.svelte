@@ -90,7 +90,7 @@
 <svelte:head><title>Weekly Insights · SEO Health</title></svelte:head>
 
 <div class="mx-auto max-w-2xl px-4 pb-24 pt-2">
-  <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back to your businesses</a>
+  <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back home</a>
 
   {#if loading}
     <div class="mt-8 space-y-5" aria-busy="true">

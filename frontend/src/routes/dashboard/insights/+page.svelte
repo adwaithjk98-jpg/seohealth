@@ -95,7 +95,7 @@
         here.
       </p>
       <a href="/dashboard" class="btn-ghost mt-3 inline-flex text-xs">
-        ← Back to your businesses
+        ← Back home
       </a>
     </div>
   {:else if totalOpen === 0}

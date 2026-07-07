@@ -61,8 +61,11 @@
     finger touches the link — on touch devices the SvelteKit default of
     ``hover`` is a no-op.
   -->
+  <!-- ``hidden sm:flex``: below the sm breakpoint the persistent bottom
+       tab bar (root layout) carries these three destinations, so showing
+       the pill too would double the nav. -->
   <nav
-    class="relative flex items-center rounded-2xl border border-canvas-soft bg-canvas-soft/40 p-1"
+    class="relative hidden items-center rounded-2xl border border-canvas-soft bg-canvas-soft/40 p-1 sm:flex"
     aria-label="Workspace sections"
     data-sveltekit-preload-code="viewport"
     data-sveltekit-preload-data="tap"

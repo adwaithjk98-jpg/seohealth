@@ -251,7 +251,7 @@
   </section>
 {:else if status === 'no_audit'}
   <section class="mx-auto mt-10 max-w-md space-y-6" in:fade={{ duration: 240 }}>
-    <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back to your businesses</a>
+    <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back home</a>
 
     {#if business}
       <BusinessProfileBanner
@@ -304,14 +304,14 @@
           ↻ Try again
         </button>
         <a href="/dashboard" class="btn-ghost text-action-700">
-          ← Back to your businesses
+          ← Back home
         </a>
       </div>
     </div>
   </section>
 {:else if audit}
   <section class="space-y-10">
-    <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back to your businesses</a>
+    <a class="btn-ghost -ml-2 text-xs" href="/dashboard">← Back home</a>
 
     {#if audit.audit_id}
       <AuditDoneBanner

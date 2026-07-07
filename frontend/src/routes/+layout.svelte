@@ -32,8 +32,17 @@
     updateCurrentUser,
     greetingName
   } from '$lib/auth.svelte.js';
+  import BottomNav from '$lib/components/BottomNav.svelte';
 
   let { children } = $props();
+
+  // Persistent mobile tab bar on every signed-in app surface. Hidden on
+  // the public routes and on "/" (the add-business form is a focused flow).
+  const showBottomNav = $derived(
+    !!authState.user &&
+      $page.url.pathname !== '/' &&
+      !isPublicRoute($page.url.pathname)
+  );
   let mobileMenuOpen = $state(false);
   let nameDraft = $state('');
   let nameSaving = $state(false);
@@ -156,9 +165,10 @@
           <!-- Dedicated home affordance. The logo top-left is also a link
                home but reads as branding; this gives a glanceable "go to
                workspace" target whether the user is on a deep audit
-               page, a billing page, or a single-business view. -->
+               page, a billing page, or a single-business view. Hidden
+               below sm — the bottom tab bar's Home covers it there. -->
           <a
-            class="btn-ghost grid h-9 w-9 place-items-center"
+            class="btn-ghost hidden h-9 w-9 place-items-center sm:grid"
             href="/dashboard"
             aria-label="Go to dashboard"
             title="Dashboard"
@@ -325,12 +335,14 @@
     </div>
   {/if}
 
-  <main class="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
+  <main class={`mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10 ${showBottomNav ? 'pb-10' : ''}`}>
     {@render children()}
   </main>
 
   <footer
-    class="mx-auto flex max-w-5xl flex-col gap-2 px-4 pb-10 pt-6 text-xs text-canvas-muted sm:flex-row sm:items-center sm:justify-between sm:px-6"
+    class={`mx-auto flex max-w-5xl flex-col gap-2 px-4 pt-6 text-xs text-canvas-muted sm:flex-row sm:items-center sm:justify-between sm:px-6 ${
+      showBottomNav ? 'pb-28 sm:pb-10' : 'pb-10'
+    }`}
   >
     <span>A calm dashboard for your business's online presence.</span>
     <nav class="flex flex-wrap gap-x-4 gap-y-1">
@@ -339,4 +351,8 @@
       <a class="hover:text-canvas-ink" href="/refund">Refund</a>
     </nav>
   </footer>
+
+  {#if showBottomNav}
+    <BottomNav />
+  {/if}
 </div>

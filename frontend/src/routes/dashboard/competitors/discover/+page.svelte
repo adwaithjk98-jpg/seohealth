@@ -989,7 +989,7 @@
 <!-- Toast — fixed at the bottom, fades + slides in/out. -->
 {#if toastMessage}
   <div
-    class="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4"
+    class="pointer-events-none fixed inset-x-0 bottom-24 z-40 flex justify-center px-4 sm:bottom-6"
     in:fly={{ y: 16, duration: 240, easing: quintOut }}
     out:fade={{ duration: 180 }}
     role="status"
