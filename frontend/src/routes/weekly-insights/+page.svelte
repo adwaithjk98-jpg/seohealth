@@ -165,13 +165,16 @@
       {#if report.trajectory?.points?.length > 1}
         <section class="mt-14">
           <p class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">Your trajectory</p>
-          <div class="mt-4 flex items-end gap-2" style="height: 8rem;">
+          <!-- Bars get explicit pixel heights: percentage heights silently
+               resolve to 0 inside an auto-height flex column (the bars were
+               invisible for months). 88px = the row's bar budget. -->
+          <div class="mt-4 flex items-end gap-2">
             {#each report.trajectory.points as pt, i}
-              <div class="flex flex-1 flex-col items-center justify-end gap-1.5">
+              <div class="flex flex-1 flex-col items-center gap-1.5">
                 <span class="text-[11px] font-semibold text-canvas-ink">{pt.score}</span>
                 <div
                   class={`w-full rounded-t-lg ${i === report.trajectory.points.length - 1 ? 'bg-healthy-500' : 'bg-healthy-200'}`}
-                  style={`height: ${Math.max(6, (pt.score / trajMax) * 100)}%;`}
+                  style={`height: ${Math.max(8, Math.round((pt.score / trajMax) * 88))}px;`}
                 ></div>
                 <span class="text-[10px] text-canvas-muted">{fmtDate(pt.date)}</span>
               </div>

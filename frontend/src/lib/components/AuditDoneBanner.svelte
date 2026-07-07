@@ -68,7 +68,9 @@
       <span class="text-lg leading-none" aria-hidden="true">✨</span>
       <div class="min-w-0">
         <p class="text-sm font-semibold text-canvas-ink">
-          Fresh audit's in{#if finishedAt} — checked {fmtDate(finishedAt)}{/if}
+          <!-- &nbsp; because the {#if} block's leading whitespace collapses,
+               which rendered as "Fresh audit's in— checked". -->
+          Fresh audit's in{#if finishedAt}&nbsp;— checked {fmtDate(finishedAt)}{/if}
         </p>
         <p class="text-xs text-canvas-muted">
           {#if newCount > 0}

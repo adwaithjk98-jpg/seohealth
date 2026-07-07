@@ -36,6 +36,16 @@
     }[arrowTone]
   );
   const trendCopy = $derived(trendLabel(score, previousScore, trend));
+  // Delta-only companion text. The pill already says Up/Down/Steady, so
+  // repeating the direction word next to it read as "↘ Down · Down 3 from
+  // last check". The full sentence stays on aria-label; the visible text
+  // carries only the size of the move.
+  const deltaCopy = $derived.by(() => {
+    if (score == null || previousScore == null) return null;
+    const d = Math.abs(score - previousScore);
+    if (d === 0 || trend === 'flat') return null;
+    return `${d} point${d === 1 ? '' : 's'} since last check`;
+  });
 
   // Animate the score up from 0 once the gauge mounts.
   let displayed = $state(0);
@@ -151,8 +161,8 @@
         <span aria-hidden="true">{arrow}</span>
         {trend === 'up' ? 'Up' : trend === 'down' ? 'Down' : 'Steady'}
       </span>
-      {#if trendCopy && trend !== 'flat'}
-        <span class="text-canvas-muted">{trendCopy}</span>
+      {#if deltaCopy}
+        <span class="text-canvas-muted">{deltaCopy}</span>
       {/if}
     </div>
   {/if}

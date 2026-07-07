@@ -19,8 +19,14 @@ function escapeHtml(s) {
 }
 
 function renderInline(text) {
-  // bold runs
-  return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // bold runs + `inline code` (recommendation bodies wrap handles and
+  // snippets in backticks — these rendered as literal ` characters before)
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(
+      /`([^`]+)`/g,
+      '<code class="rounded bg-canvas-soft px-1 py-0.5 font-mono text-[0.85em]">$1</code>'
+    );
 }
 
 export function renderMarkdown(src) {

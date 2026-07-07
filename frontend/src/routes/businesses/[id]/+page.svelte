@@ -90,6 +90,11 @@
   const sections = $derived(
     (audit?.sections ?? []).filter((/** @type {any} */ s) => s.enabled !== false)
   );
+  // "Your five health pillars" — spelled out, and honest about how many
+  // actually rendered (opt-outs hide pillars; new pillars keep shipping —
+  // the old hardcoded "four" survived the site-speed pillar by two weeks).
+  const PILLAR_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'];
+  const pillarCountWord = $derived(PILLAR_WORDS[sections.length] ?? String(sections.length));
   const top3 = $derived(topOpenRecommendations(sections, 3));
   const totalOpen = $derived(audit?.open_recommendations_count ?? 0);
   const totalDone = $derived(audit?.done_recommendations_count ?? 0);
@@ -329,8 +334,11 @@
           <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
           Today’s health check
         </p>
+        <!-- The h1 is the business itself — the old "Hello, {name} 👋"
+             greeted the cafe, not the owner. The encouragement line below
+             carries the warmth, addressed to the person reading. -->
         <h1 class="mt-3 text-3xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
-          Hello, {audit.business?.name || 'there'} 👋
+          {audit.business?.name || 'Your business'}
         </h1>
         <p class="mt-2 max-w-xl text-sm text-canvas-muted">
           {scoreEncouragement(audit.overall_score)}
@@ -358,7 +366,9 @@
 
     <section>
       <div class="flex items-end justify-between gap-3">
-        <h2 class="text-lg font-semibold text-canvas-ink">Your four health pillars</h2>
+        <h2 class="text-lg font-semibold text-canvas-ink">
+          Your {pillarCountWord} health pillars
+        </h2>
         <p class="text-xs text-canvas-muted">Tap any card to dive in</p>
       </div>
       <div class="mt-4 grid gap-4 sm:grid-cols-2">
