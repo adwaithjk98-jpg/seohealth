@@ -1,7 +1,7 @@
 <script>
   import '../app.css';
   import { onMount } from 'svelte';
-  import { fly } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
   import { page } from '$app/stores';
   import { goto, onNavigate } from '$app/navigation';
@@ -129,6 +129,32 @@
     mobileMenuOpen = false;
     await logout();
   }
+
+  // Swipe-down-to-dismiss for the account sheet — same gesture the finding
+  // modal uses, so the two sheets feel like one family.
+  let sheetTouchStartY = 0;
+  let sheetDragging = $state(false);
+  let sheetDragOffset = $state(0);
+  const SHEET_DISMISS_PX = 70;
+
+  /** @param {TouchEvent} event */
+  function onSheetTouchStart(event) {
+    sheetTouchStartY = event.touches[0].clientY;
+    sheetDragging = true;
+  }
+
+  /** @param {TouchEvent} event */
+  function onSheetTouchMove(event) {
+    if (!sheetDragging) return;
+    sheetDragOffset = Math.max(0, event.touches[0].clientY - sheetTouchStartY);
+  }
+
+  function onSheetTouchEnd() {
+    if (!sheetDragging) return;
+    sheetDragging = false;
+    if (sheetDragOffset > SHEET_DISMISS_PX) mobileMenuOpen = false;
+    sheetDragOffset = 0;
+  }
 </script>
 
 <div class="min-h-screen bg-canvas">
@@ -213,110 +239,25 @@
             Sign out
           </button>
 
-          <!-- m7 — mobile-only popover so the signed-in email + sign-out
-               are still reachable below 768px (previously the email just
-               disappeared from the header with no replacement). -->
-          <div class="relative sm:hidden">
-            <button
-              type="button"
-              class="btn-ghost grid h-9 w-9 place-items-center"
-              aria-haspopup="menu"
-              aria-expanded={mobileMenuOpen}
-              aria-label="Account menu"
-              onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
+          <!-- Mobile-only avatar trigger. The account surface itself is a
+               bottom sheet rendered at the root of the layout (not here:
+               the header's backdrop-blur makes it a containing block for
+               fixed descendants, which would pin a sheet to the header). -->
+          <button
+            type="button"
+            class="btn-ghost grid h-9 w-9 place-items-center sm:hidden"
+            aria-haspopup="dialog"
+            aria-expanded={mobileMenuOpen}
+            aria-label="Account menu"
+            onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
+          >
+            <span
+              class="grid h-7 w-7 place-items-center rounded-full bg-healthy-500 text-xs font-semibold uppercase text-white"
+              aria-hidden="true"
             >
-              <span
-                class="grid h-7 w-7 place-items-center rounded-full bg-healthy-500 text-xs font-semibold uppercase text-white"
-                aria-hidden="true"
-              >
-                {greetingName(authState.user)[0] || authState.user.email[0]}
-              </span>
-            </button>
-            {#if mobileMenuOpen}
-              <!-- Backdrop tap closes the popover without taking up screen
-                   real-estate on small viewports. -->
-              <button
-                type="button"
-                class="fixed inset-0 z-30 cursor-default bg-canvas-ink/0"
-                aria-hidden="true"
-                tabindex="-1"
-                onclick={() => (mobileMenuOpen = false)}
-              ></button>
-              <div
-                class="absolute right-0 top-12 z-40 w-72 rounded-2xl border border-canvas-soft bg-white p-3 shadow-soft"
-                role="menu"
-                transition:fly={{ y: -8, duration: 180, easing: quintOut }}
-              >
-                <label class="px-2 text-xs uppercase tracking-wide text-canvas-muted" for="display-name-input">
-                  What should we call you?
-                </label>
-                <div class="mt-1.5 flex items-center gap-2 px-2">
-                  <input
-                    id="display-name-input"
-                    type="text"
-                    bind:value={nameDraft}
-                    placeholder={greetingName(authState.user)}
-                    maxlength="120"
-                    class="flex-1 rounded-xl border border-canvas-soft bg-canvas-soft/50 px-3 py-2 text-sm text-canvas-ink placeholder:text-canvas-muted focus:border-healthy-300 focus:bg-white focus:outline-none"
-                    onkeydown={(e) => e.key === 'Enter' && handleSaveDisplayName()}
-                  />
-                  <button
-                    type="button"
-                    class="rounded-xl bg-healthy-500 px-3 py-2 text-xs font-medium text-white hover:bg-healthy-600 disabled:opacity-50"
-                    onclick={handleSaveDisplayName}
-                    disabled={nameSaving}
-                  >
-                    {nameSaving ? '…' : 'Save'}
-                  </button>
-                </div>
-                {#if nameError}
-                  <p class="mt-2 px-2 text-xs text-action-700">{nameError}</p>
-                {/if}
-                <p class="mt-2 truncate px-2 text-xs text-canvas-muted">
-                  Signed in as {authState.user.email}
-                </p>
-                {#if isFree}
-                  <a
-                    href="/billing"
-                    class="btn-ghost mt-2 w-full justify-start font-medium text-healthy-700"
-                    role="menuitem"
-                  >
-                    Upgrade to Pro
-                  </a>
-                {/if}
-                {#if isAdmin}
-                  <a
-                    href="/admin"
-                    class="btn-ghost mt-2 w-full justify-start"
-                    role="menuitem"
-                  >
-                    Stats
-                  </a>
-                {/if}
-                <a
-                  href="/account"
-                  class="btn-ghost mt-2 w-full justify-start"
-                  role="menuitem"
-                >
-                  Account
-                </a>
-                <a
-                  href="/billing"
-                  class="btn-ghost mt-2 w-full justify-start"
-                  role="menuitem"
-                >
-                  Billing &amp; plan
-                </a>
-                <button
-                  type="button"
-                  class="btn-ghost mt-2 w-full justify-start"
-                  onclick={handleLogout}
-                >
-                  Sign out
-                </button>
-              </div>
-            {/if}
-          </div>
+              {greetingName(authState.user)[0] || authState.user.email[0]}
+            </span>
+          </button>
         {:else if authState.loaded}
           <a class="btn-ghost" href="/login">Sign in</a>
         {/if}
@@ -354,5 +295,138 @@
 
   {#if showBottomNav}
     <BottomNav />
+  {/if}
+
+  {#if authState.user && mobileMenuOpen}
+    <!-- Account bottom sheet (mobile). Replaces the old top-anchored
+         popover: on a phone, account actions belong under the thumb, in
+         the same sheet language as the finding modal. -->
+    <div
+      class="fixed inset-0 z-50 flex items-end sm:hidden"
+      role="presentation"
+      in:fade={{ duration: 180 }}
+      out:fade={{ duration: 150 }}
+    >
+      <button
+        type="button"
+        class="absolute inset-0 cursor-default bg-canvas-ink/40"
+        aria-label="Close account menu"
+        tabindex="-1"
+        onclick={() => (mobileMenuOpen = false)}
+      ></button>
+      <div
+        class="relative w-full rounded-t-3xl bg-white shadow-soft"
+        style={`padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)); ${
+          sheetDragging
+            ? `transform: translateY(${sheetDragOffset}px); transition: none;`
+            : 'transform: translateY(0); transition: transform 200ms ease-out;'
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Account"
+        in:fly={{ y: 240, duration: 260, easing: quintOut }}
+        out:fly={{ y: 240, duration: 200 }}
+      >
+        <!-- Drag handle — swipe down past the threshold to dismiss. -->
+        <div
+          class="flex h-8 cursor-grab touch-none items-center justify-center"
+          ontouchstart={onSheetTouchStart}
+          ontouchmove={onSheetTouchMove}
+          ontouchend={onSheetTouchEnd}
+          ontouchcancel={onSheetTouchEnd}
+          role="presentation"
+        >
+          <span class="h-1 w-10 rounded-full bg-canvas-soft" aria-hidden="true"></span>
+        </div>
+
+        <div class="px-5 pb-2">
+          <div class="flex items-center gap-3">
+            <span
+              class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-healthy-500 text-base font-semibold uppercase text-white"
+              aria-hidden="true"
+            >
+              {greetingName(authState.user)[0] || authState.user.email[0]}
+            </span>
+            <div class="min-w-0">
+              <p class="truncate text-base font-semibold text-canvas-ink">
+                {greetingName(authState.user)}
+              </p>
+              <p class="truncate text-xs text-canvas-muted">{authState.user.email}</p>
+            </div>
+          </div>
+
+          <label
+            class="mt-5 block text-xs uppercase tracking-wide text-canvas-muted"
+            for="display-name-input"
+          >
+            What should we call you?
+          </label>
+          <div class="mt-1.5 flex items-center gap-2">
+            <input
+              id="display-name-input"
+              type="text"
+              bind:value={nameDraft}
+              placeholder={greetingName(authState.user)}
+              maxlength="120"
+              class="min-w-0 flex-1 rounded-xl border border-canvas-soft bg-canvas-soft/50 px-3 py-2.5 text-sm text-canvas-ink placeholder:text-canvas-muted focus:border-healthy-300 focus:bg-white focus:outline-none"
+              onkeydown={(e) => e.key === 'Enter' && handleSaveDisplayName()}
+            />
+            <button
+              type="button"
+              class="rounded-xl bg-healthy-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-healthy-600 disabled:opacity-50"
+              onclick={handleSaveDisplayName}
+              disabled={nameSaving}
+            >
+              {nameSaving ? '…' : 'Save'}
+            </button>
+          </div>
+          {#if nameError}
+            <p class="mt-2 text-xs text-action-700">{nameError}</p>
+          {/if}
+
+          <nav class="mt-4 divide-y divide-canvas-soft border-t border-canvas-soft" aria-label="Account">
+            {#if isFree}
+              <a
+                href="/billing"
+                class="flex min-h-[52px] items-center justify-between py-3 text-sm font-medium text-healthy-700"
+              >
+                Upgrade to Pro
+                <span class="text-canvas-muted" aria-hidden="true">→</span>
+              </a>
+            {/if}
+            {#if isAdmin}
+              <a
+                href="/admin"
+                class="flex min-h-[52px] items-center justify-between py-3 text-sm text-canvas-ink"
+              >
+                Stats
+                <span class="text-canvas-muted" aria-hidden="true">→</span>
+              </a>
+            {/if}
+            <a
+              href="/account"
+              class="flex min-h-[52px] items-center justify-between py-3 text-sm text-canvas-ink"
+            >
+              Account
+              <span class="text-canvas-muted" aria-hidden="true">→</span>
+            </a>
+            <a
+              href="/billing"
+              class="flex min-h-[52px] items-center justify-between py-3 text-sm text-canvas-ink"
+            >
+              Billing &amp; plan
+              <span class="text-canvas-muted" aria-hidden="true">→</span>
+            </a>
+            <button
+              type="button"
+              class="flex min-h-[52px] w-full items-center justify-between py-3 text-left text-sm text-canvas-muted"
+              onclick={handleLogout}
+            >
+              Sign out
+            </button>
+          </nav>
+        </div>
+      </div>
+    </div>
   {/if}
 </div>

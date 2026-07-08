@@ -338,14 +338,18 @@
 
       <!-- Series filter pills. Each pill carries the line's exact chart -->
       <!-- color via inline style so the dot stays in sync if the palette -->
-      <!-- changes later. -->
-      <div class="mt-4 flex flex-wrap gap-2">
+      <!-- changes later. Long names truncate so a six-series market view
+           reads as a tidy two-row chip rack instead of a stack of
+           full-width banners (the full name stays on the title tooltip
+           and in the data matrix below). -->
+      <div class="mt-4 flex flex-wrap gap-1.5">
         {#each allSeries as series (series.id)}
           {@const off = disabledIds.has(series.id)}
           <button
             type="button"
             aria-pressed={!off}
-            class={`group inline-flex min-h-[32px] items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition ${
+            title={series.name}
+            class={`group inline-flex min-h-[32px] max-w-full items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition ${
               off
                 ? 'border-canvas-soft bg-white text-canvas-muted hover:text-canvas-ink'
                 : 'border-canvas-ink/10 bg-canvas-soft/60 text-canvas-ink shadow-sm hover:border-canvas-ink/20'
@@ -353,11 +357,13 @@
             onclick={() => toggleSeries(series.id)}
           >
             <span
-              class={`h-2.5 w-2.5 rounded-full transition ${off ? 'opacity-30' : ''}`}
+              class={`h-2.5 w-2.5 shrink-0 rounded-full transition ${off ? 'opacity-30' : ''}`}
               style={`background-color: ${series.color}`}
               aria-hidden="true"
             ></span>
-            <span class={off ? 'line-through' : ''}>{series.name}</span>
+            <span class={`max-w-[10rem] truncate ${off ? 'line-through' : ''}`}>
+              {series.name}
+            </span>
           </button>
         {/each}
       </div>
@@ -403,11 +409,15 @@
       <div class="card overflow-x-auto p-0">
         <table class="w-full min-w-[640px] text-sm">
           <thead>
+            <!-- Solid backgrounds only in this table: the sticky first
+                 column previously used translucent fills (/30, /60 +
+                 blur), so horizontally-scrolled values ghosted through
+                 the Metric labels on the odd stripes. -->
             <tr
-              class="border-b border-canvas-soft bg-canvas-soft/40 text-xs uppercase tracking-wide text-canvas-muted"
+              class="border-b border-canvas-soft bg-canvas-soft text-xs uppercase tracking-wide text-canvas-muted"
             >
               <th
-                class="sticky left-0 z-10 bg-canvas-soft/60 px-5 py-4 text-left font-semibold backdrop-blur"
+                class="sticky left-0 z-10 border-r border-canvas-soft bg-canvas-soft px-5 py-4 text-left font-semibold"
               >
                 Metric
               </th>
@@ -437,10 +447,10 @@
           <tbody>
             {#each matrixMetrics as m, midx (m.key)}
               <tr
-                class={`border-b border-canvas-soft/50 last:border-0 ${midx % 2 === 0 ? 'bg-white' : 'bg-canvas-soft/20'}`}
+                class={`border-b border-canvas-soft/50 last:border-0 ${midx % 2 === 0 ? 'bg-white' : 'bg-canvas'}`}
               >
                 <th
-                  class={`sticky left-0 z-10 px-5 py-5 text-left ${midx % 2 === 0 ? 'bg-white' : 'bg-canvas-soft/30'}`}
+                  class={`sticky left-0 z-10 border-r border-canvas-soft px-5 py-5 text-left ${midx % 2 === 0 ? 'bg-white' : 'bg-canvas'}`}
                   scope="row"
                 >
                   <p class="text-sm font-semibold text-canvas-ink">{m.label}</p>

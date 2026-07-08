@@ -484,10 +484,10 @@
     {/if}
   {:else}
     <!-- ═══ Multi-business grid (Max), or single-business fallback when the
-         hero's audit fetch failed. ═══ -->
-    <div>
-      <WeeklyInsightsButton {businesses} />
-    </div>
+         hero's audit fetch failed. Weekly Insights leads as a full card —
+         the recap is the weekly habit; it shouldn't hide as a small pill
+         above the insights count. -->
+    <WeeklyInsightsButton {businesses} variant="card" />
 
     <a
       href="/dashboard/insights"
