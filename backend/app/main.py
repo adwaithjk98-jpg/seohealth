@@ -25,7 +25,7 @@ if settings.sentry_dsn:
         environment=settings.app_env,
     )
 
-app = FastAPI(title="AuditHealth API", version="0.1.0")
+app = FastAPI(title="SEO Health API", version="0.1.0")
 
 # Rate limiting (slowapi). The limiter is attached to app state and a handler
 # turns over-limit hits into a clean 429 instead of a 500.

@@ -21,10 +21,14 @@
 
 # Internal planning / cost / build-prompt docs — kept LOCAL, never published.
 # (Root-level markdown only; README.md is the one public doc. Subdir docs and
-# the screenshot folders are unaffected.)
+# the screenshot folders are unaffected.) ARCHITECTURE.md + ROADMAP.md are
+# tracked on purpose: they're the durable system-map + build-plan docs
+# (2026-07-08), not scratch notes.
 /*.md
 /.*.md
 !/README.md
+!/ARCHITECTURE.md
+!/ROADMAP.md
 /claude_prompts/
 
 # Stray root-level screenshot / test PNGs — kept local (screenshot folders OK).
