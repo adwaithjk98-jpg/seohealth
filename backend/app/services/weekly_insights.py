@@ -347,6 +347,12 @@ def build_report(
         "is_first": len(history) <= 1,
     }
     lead = _lead(history, business.name)
+    if not paid and lead.get("tone") == "soft":
+        # The dip sub promises "one clear move to turn it around below" —
+        # which for free users is exactly the beat that renders locked.
+        # Keep the dip honest without pointing at a paywall as if it were
+        # already theirs to read.
+        lead = {**lead, "sub": "A small step back — one focused fix usually brings it right back."}
     pride = _pride(business, audits_desc)
 
     base: dict[str, Any] = {

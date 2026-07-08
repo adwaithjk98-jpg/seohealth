@@ -210,12 +210,19 @@
                 <span class="text-lg font-medium text-canvas-muted">· {report.growth.rating}★</span>
               {/if}
             </p>
+            <!-- Review counts do go down (Google prunes reviews). Saying
+                 "steady" over a real drop is the kind of white lie a trust
+                 product can't afford — name the direction, calmly. -->
             <p class="mt-2 text-sm text-canvas-muted">
               {#if report.growth.reviews_delta > 0}
                 <span class="font-medium text-healthy-700">+{report.growth.reviews_delta} this week</span> ·
+              {:else if report.growth.reviews_delta < 0}
+                {Math.abs(report.growth.reviews_delta)} fewer than last check ·
               {/if}
               {#if report.growth.reviews_total_gained > 0}
                 {report.growth.reviews_total_gained} gained since we started watching.
+              {:else if report.growth.reviews_total_gained < 0}
+                down {Math.abs(report.growth.reviews_total_gained)} since we started watching.
               {:else}
                 steady since we started watching.
               {/if}

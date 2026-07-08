@@ -103,6 +103,7 @@ def _to_business_input(business: Business) -> BusinessInput:
         website=business.website,
         ig_handle=business.ig_handle,
         google_place_id=business.google_place_id,
+        business_type=business.business_type,
     )
 
 

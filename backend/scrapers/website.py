@@ -137,7 +137,7 @@ async def audit_website(business: BusinessInput) -> SectionResult:
         raw["ig_link_expected"] = user_ig
 
     score = _score_website(raw)
-    recommendations = _recommendations(raw)
+    recommendations = _recommendations(raw, business)
     discovered: dict[str, str | None] = {}
     if ig_handle:
         discovered["ig_handle"] = ig_handle
@@ -333,7 +333,27 @@ def _score_website(raw: dict[str, Any]) -> int:
     return max(0, min(100, score))
 
 
-def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
+# Type-specific example lines for the meta-description rec. The old copy
+# gave everyone the café example — a B2B supplier reading "single-origin
+# coffee and fresh bakes" is exactly the generic-filler feeling the product
+# promises to avoid. Keyed by the FTUE ``business_type``; city is spliced in
+# so the example reads like *their* pitch, not a template.
+_META_EXAMPLES: dict[str, str] = {
+    "cafe": "Cosy specialty café in {city} serving single-origin coffee and fresh bakes.",
+    "salon": "Friendly salon in {city} for cuts, colour, and bridal styling — walk-ins welcome.",
+    "retail": "Neighbourhood store in {city} for everyday essentials and local favourites.",
+    "service": "Reliable local service in {city} — quick quotes and on-time visits.",
+    "supplier": "Trusted wholesale supplier in {city} — quality stock, dependable delivery.",
+}
+_META_EXAMPLE_DEFAULT = "Family-run business in {city} known for friendly service and fair prices."
+
+
+def _meta_description_example(business: BusinessInput) -> str:
+    template = _META_EXAMPLES.get(business.business_type or "", _META_EXAMPLE_DEFAULT)
+    return template.format(city=business.city)
+
+
+def _recommendations(raw: dict[str, Any], business: BusinessInput) -> list[RecommendationDraft]:
     recs: list[RecommendationDraft] = []
 
     if not raw.get("https"):
@@ -368,8 +388,8 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                     "often picks the wrong sentence. A custom meta description is your chance to "
                     "write the pitch that shows up in search results.\n\n"
                     "**How to fix it**\n\n"
-                    "1. Write a 1-2 sentence summary of what you do (e.g. \"Cosy specialty café in "
-                    "Calicut serving single-origin coffee and fresh bakes.\").\n"
+                    "1. Write a 1-2 sentence summary of what you do (e.g. "
+                    f"\"{_meta_description_example(business)}\").\n"
                     "2. Open your site's settings (most builders have an SEO panel) and paste it "
                     "into the **Meta description** field.\n"
                     "3. If you're hand-coding, add `<meta name=\"description\" content=\"…\" />` to "
@@ -493,7 +513,7 @@ def _recommendations(raw: dict[str, Any]) -> list[RecommendationDraft]:
                     "2. Update the link in your website's footer / header to point to that "
                     "handle.\n"
                     "3. If the wrong handle is actually the canonical one, update it in your "
-                    "AuditHealth profile via Edit business details.\n"
+                    "SEO Health profile via Edit business details.\n"
                     "4. Re-run this audit to confirm."
                 ),
                 estimated_impact="big",

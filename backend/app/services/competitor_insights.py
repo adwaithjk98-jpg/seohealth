@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
-from sqlalchemy import desc, func
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -63,6 +64,14 @@ class InsightFact:
     ``user_value`` and ``competitor_average`` are typed loose (float) so a
     review_count fact (integers) and a rating fact (decimals) can share the
     same shape without losing precision.
+
+    The named-rival fields exist so the sentence can be *specific* — "the
+    nearest target is Slash Resto at 240" — instead of restating the average
+    the card already shows. All of them are computed here, deterministically;
+    the phrasing layer may only repeat them, never extend them.
+    ``closest_above`` is the nearest rival strictly above the user (the next
+    target); ``closest_below`` the nearest strictly below (the chaser).
+    Frozen + hashable on purpose: the LLM sentence cache keys on this.
     """
 
     kind: InsightKind
@@ -71,6 +80,11 @@ class InsightFact:
     competitor_average: float
     competitor_sample_size: int
     delta: float  # always reported as (user - competitor_average)
+    ahead_of_count: int = 0  # rivals strictly below the user on this metric
+    closest_above_name: str | None = None
+    closest_above_value: float | None = None
+    closest_below_name: str | None = None
+    closest_below_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -118,9 +132,18 @@ def _user_latest_maps_snapshot(db: Session, business_id: int) -> dict | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _competitor_latest_observations(
-    db: Session, business_id: int
-) -> list[CompetitorObservation]:
+@dataclass(frozen=True)
+class RivalSnapshot:
+    """Latest observation for one named competitor — name travels with the
+    numbers so the insight sentence can point at a real rival, not just an
+    anonymous average."""
+
+    name: str
+    rating: float | None
+    review_count: int | None
+
+
+def _competitor_latest_snapshots(db: Session, business_id: int) -> list[RivalSnapshot]:
     """One row per active competitor — their most recent observation.
 
     Mirrors ``_latest_observation_map`` in the competitors API so the hub's
@@ -136,10 +159,10 @@ def _competitor_latest_observations(
     )
     if not competitors:
         return []
-    comp_ids = [c.id for c in competitors]
+    names = {c.id: c.name for c in competitors}
     rows: list[CompetitorObservation] = (
         db.query(CompetitorObservation)
-        .filter(CompetitorObservation.competitor_id.in_(comp_ids))
+        .filter(CompetitorObservation.competitor_id.in_(list(names)))
         .order_by(
             desc(CompetitorObservation.observed_at),
             desc(CompetitorObservation.id),
@@ -149,11 +172,18 @@ def _competitor_latest_observations(
     latest: dict[int, CompetitorObservation] = {}
     for row in rows:
         latest.setdefault(row.competitor_id, row)
-    return list(latest.values())
+    return [
+        RivalSnapshot(
+            name=names.get(comp_id) or "a competitor",
+            rating=obs.rating,
+            review_count=obs.review_count,
+        )
+        for comp_id, obs in latest.items()
+    ]
 
 
 def _facts_for(
-    user_snapshot: dict, competitor_obs: list[CompetitorObservation]
+    user_snapshot: dict, rivals: list[RivalSnapshot]
 ) -> list[InsightFact]:
     """Compute one (user, competitor avg, delta) fact per comparable metric.
 
@@ -166,16 +196,18 @@ def _facts_for(
         user_value = user_snapshot.get(metric)
         if user_value is None:
             continue
-        comp_values: list[float] = []
-        for obs in competitor_obs:
-            value = obs.rating if metric == "rating" else obs.review_count
+        named: list[tuple[str, float]] = []
+        for rival in rivals:
+            value = rival.rating if metric == "rating" else rival.review_count
             if value is None:
                 continue
-            comp_values.append(float(value))
-        if not comp_values:
+            named.append((rival.name, float(value)))
+        if not named:
             continue
+        comp_values = [v for _, v in named]
         avg = sum(comp_values) / len(comp_values)
-        delta = float(user_value) - avg
+        user_f = float(user_value)
+        delta = user_f - avg
         threshold = _MATCHED_THRESHOLDS[metric]
         if abs(delta) < threshold:
             kind: InsightKind = "matched"
@@ -183,14 +215,28 @@ def _facts_for(
             kind = "winning"
         else:
             kind = "opportunity"
+
+        # Named-rival context, all deterministic: the nearest rival above
+        # (the next target) and below (the closest chaser), at the same
+        # precision the UI renders so the copy can't disagree with the card.
+        above = [(n, v) for n, v in named if v - user_f >= threshold]
+        below = [(n, v) for n, v in named if user_f - v >= threshold]
+        closest_above = min(above, key=lambda nv: nv[1]) if above else None
+        closest_below = max(below, key=lambda nv: nv[1]) if below else None
+
         facts.append(
             InsightFact(
                 kind=kind,
                 metric=metric,  # type: ignore[arg-type]
-                user_value=float(user_value),
+                user_value=user_f,
                 competitor_average=avg,
-                competitor_sample_size=len(comp_values),
+                competitor_sample_size=len(named),
                 delta=delta,
+                ahead_of_count=len(below),
+                closest_above_name=closest_above[0] if closest_above else None,
+                closest_above_value=closest_above[1] if closest_above else None,
+                closest_below_name=closest_below[0] if closest_below else None,
+                closest_below_value=closest_below[1] if closest_below else None,
             )
         )
     return facts
@@ -207,22 +253,62 @@ def _deterministic_sentence(fact: InsightFact) -> str:
 
     Hand-written so it can stand in for the LLM output verbatim — calm,
     one sentence, no superlatives, no claims beyond the underlying math.
+    Points at a *named* rival where the data supports one: the card
+    already shows the average, so the sentence's job is the specific
+    next target (or closest chaser), not a restatement.
     """
     metric_label = _METRIC_LABELS[fact.metric]
     user_str = _format_value(fact.metric, fact.user_value)
     comp_str = _format_value(fact.metric, fact.competitor_average)
     sample = fact.competitor_sample_size
     competitor_word = "competitor" if sample == 1 else "competitors"
+
     if fact.kind == "winning":
+        if fact.ahead_of_count == sample and fact.closest_below_name:
+            nearest = _format_value(fact.metric, fact.closest_below_value or 0.0)
+            return (
+                f"Your {metric_label} ({user_str}) leads all {sample} "
+                f"{competitor_word} you're tracking — {fact.closest_below_name} "
+                f"is closest at {nearest}."
+            )
+        if fact.closest_above_name:
+            # Above the average, but a rival is still ahead — say so honestly.
+            target = _format_value(fact.metric, fact.closest_above_value or 0.0)
+            return (
+                f"Your {metric_label} ({user_str}) is above the average of the "
+                f"{sample} {competitor_word} you track, though "
+                f"{fact.closest_above_name} is still ahead at {target}."
+            )
         return (
             f"Your {metric_label} ({user_str}) is sitting above the {sample} "
             f"{competitor_word} you're tracking, who average {comp_str}."
         )
+
     if fact.kind == "matched":
+        if sample == 1:
+            return (
+                f"Your {metric_label} ({user_str}) is right in line with the "
+                f"one competitor you're tracking, who's also at {comp_str}."
+            )
         return (
             f"Your {metric_label} ({user_str}) is right in line with the "
-            f"{sample} {competitor_word} you're tracking, who also average "
+            f"{sample} competitors you're tracking, who also average "
             f"{comp_str}."
+        )
+
+    # Opportunity — frame the nearest rival above as the next target.
+    if fact.closest_above_name:
+        target = _format_value(fact.metric, fact.closest_above_value or 0.0)
+        if fact.ahead_of_count > 0:
+            return (
+                f"Your {metric_label} ({user_str}) is ahead of "
+                f"{fact.ahead_of_count} of the {sample} {competitor_word} you "
+                f"track — the next target is {fact.closest_above_name} at {target}."
+            )
+        return (
+            f"Your {metric_label} ({user_str}) trails the {sample} "
+            f"{competitor_word} you're tracking — the nearest, "
+            f"{fact.closest_above_name}, is at {target}."
         )
     return (
         f"Your {metric_label} ({user_str}) is currently below the {sample} "
@@ -230,6 +316,7 @@ def _deterministic_sentence(fact: InsightFact) -> str:
     )
 
 
+@lru_cache(maxsize=512)
 def _llm_sentence(fact: InsightFact, business_name: str) -> str | None:
     """One-sentence summarisation of ``fact`` via Claude Haiku, or None.
 
@@ -237,6 +324,14 @@ def _llm_sentence(fact: InsightFact, business_name: str) -> str | None:
     missing key, SDK not installed, network error, model returns empty.
     The system prompt locks the model to *summarisation only* — see the
     prompt's "must NOT invent business logic" rule.
+
+    ``lru_cache``: this used to fire on every hub page-load, twice — pure
+    cost and latency for a fact that only changes when an audit or the
+    weekly competitor refresh writes new numbers. The fact dataclass is
+    frozen/hashable, so identical facts hit the cache until the process
+    restarts or the numbers actually move. (Failures also cache until
+    restart — acceptable: the deterministic fallback is a full substitute,
+    and a restart or fresh fact clears it.)
     """
     api_key = settings.anthropic_api_key
     if not api_key:
@@ -251,41 +346,60 @@ def _llm_sentence(fact: InsightFact, business_name: str) -> str | None:
         return None
 
     system_prompt = (
-        "You are a phrasing layer for a small business analytics dashboard. "
-        "You receive a structured fact comparing one business's metric to "
-        "the average of its tracked competitors. Your only job is to "
-        "express that fact in one calm, plain sentence — at most 25 words. "
-        "Rules: do NOT invent any numbers or context not in the fact. Do "
-        "NOT speculate about causes. Do NOT recommend actions. Do NOT use "
-        "superlatives like 'crushing it' or 'dominating'. Reference the "
-        "business by name. If the user is ahead, frame it neutrally; if "
-        "behind, frame it as room to grow rather than a problem; if the "
-        "deltas are essentially zero, say the user is matching the "
-        "competition."
+        "You write one sentence for a calm small-business dashboard card. "
+        "You get a structured, pre-verified fact comparing the owner's "
+        "business to the local competitors they track. Express the most "
+        "useful part of that fact in ONE plain sentence, at most 26 words.\n"
+        "Voice: speak directly to the owner as 'you/your', like the rest of "
+        "the app. Warm, specific, level-headed.\n"
+        "Hard rules:\n"
+        "- Use ONLY the numbers and names given. Never invent, round "
+        "differently, or extrapolate.\n"
+        "- No advice, no causes, no predictions.\n"
+        "- No hype words (crushing, dominating, skyrocketing) and no "
+        "alarm words (losing, falling behind badly).\n"
+        "- Prefer the named rival over the average: the card already "
+        "shows the average, so the sentence should add the specific — "
+        "who's nearest, and the gap.\n"
+        "- If behind, frame the nearest rival above as the next target. "
+        "If essentially tied, say you're matching the competition.\n"
+        "Reply with the sentence only."
     )
 
-    if fact.kind == "winning":
-        direction = "ahead of"
-    elif fact.kind == "matched":
-        direction = "tracking right alongside"
-    else:
-        direction = "behind"
-    user_msg = (
-        f"Business name: {business_name}\n"
-        f"Metric: {_METRIC_LABELS[fact.metric]}\n"
-        f"{business_name}'s value: {_format_value(fact.metric, fact.user_value)}\n"
-        f"Average across {fact.competitor_sample_size} tracked competitor(s): "
-        f"{_format_value(fact.metric, fact.competitor_average)}\n"
-        f"Direction: {business_name} is {direction} the competitor average "
-        f"by {abs(fact.delta):.2f}.\n\n"
-        "Write one sentence summarising this fact."
-    )
+    lines = [
+        f"Business (the owner's): {business_name}",
+        f"Metric: {_METRIC_LABELS[fact.metric]}",
+        f"Your value: {_format_value(fact.metric, fact.user_value)}",
+        (
+            f"Average of {fact.competitor_sample_size} tracked competitor(s): "
+            f"{_format_value(fact.metric, fact.competitor_average)}"
+        ),
+        (
+            f"Rivals you're ahead of on this metric: {fact.ahead_of_count} "
+            f"of {fact.competitor_sample_size}"
+        ),
+    ]
+    if fact.closest_above_name is not None and fact.closest_above_value is not None:
+        lines.append(
+            "Nearest rival above you: "
+            f"{fact.closest_above_name} at "
+            f"{_format_value(fact.metric, fact.closest_above_value)}"
+        )
+    if fact.closest_below_name is not None and fact.closest_below_value is not None:
+        lines.append(
+            "Nearest rival below you: "
+            f"{fact.closest_below_name} at "
+            f"{_format_value(fact.metric, fact.closest_below_value)}"
+        )
+    lines.append(f"Verdict (already decided): {fact.kind}")
+    user_msg = "\n".join(lines) + "\n\nWrite the sentence."
 
     try:
         client = Anthropic(api_key=api_key)
         response = client.messages.create(
             model=settings.anthropic_insights_model,
-            max_tokens=120,
+            max_tokens=100,
+            temperature=0.2,
             system=system_prompt,
             messages=[{"role": "user", "content": user_msg}],
         )
@@ -337,11 +451,11 @@ def build_hub_insights(
     if not user_snapshot:
         return []
 
-    competitor_obs = _competitor_latest_observations(db, business.id)
-    if not competitor_obs:
+    rivals = _competitor_latest_snapshots(db, business.id)
+    if not rivals:
         return []
 
-    facts = _facts_for(user_snapshot, competitor_obs)
+    facts = _facts_for(user_snapshot, rivals)
     if not facts:
         return []
 

@@ -21,6 +21,10 @@ class BusinessInput:
     # Stored Places API (New) id, when we've resolved one. Lets the Maps audit
     # skip the name+city search and read the exact listing via Place Details.
     google_place_id: str | None = None
+    # FTUE answer ('cafe' | 'salon' | 'retail' | 'service' | 'supplier' |
+    # 'other' | None). Recommendation copy uses it for type-specific examples
+    # instead of assuming everyone runs a café.
+    business_type: str | None = None
 
 
 @dataclass
