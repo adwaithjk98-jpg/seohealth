@@ -8,17 +8,18 @@ M ≈ 1–2 days, L ≈ 3–5 days.*
 
 ## Do this first — top 3
 
-1. **Migrate discovery off Selenium onto Places Text Search.** (L)
-   The last Chrome/subprocess/second-repo dependency, the biggest VPS risk,
-   and an explicit pre-deploy decision (2026-06-24) that isn't built yet.
-   Contract: Text Search with the rich field mask (rating, userRatingCount,
-   websiteUri come back **in the search response**), 20 results/page,
-   ≤3 pages, all filtering in memory, **zero per-candidate Place Details
-   calls** (the cost trap). Keep the `DiscoveryScan` row/JSON contract so
-   the whole frontend flow (gateway → 1-by-1 cards → track) is untouched.
-   IG URLs for discovered leads: leave null at scan time; the weekly Graph
-   refresh already backfills what it can. Delete or dev-flag
-   `competitor_scraper_adapter.py` afterwards.
+1. **Verify + close out the discovery→Places migration.** (S–M, was L)
+   *Corrected 2026-07-12: this was written as "not built yet" but commit
+   `d5cd81d` (2026-07-07) already contains the complete native engine —
+   `services/discovery.py` wired into `discovery_scan_job`, filter DSL
+   ported verbatim, Selenium out of requirements, zero remaining callers
+   of `competitor_scraper_adapter.py`.* What actually remains: run one
+   real scan against live Places and check the SKU report (zero Place
+   Details per candidate — the cost trap), then the ranked findings in
+   `PLACES_MIGRATION_CLOSEOUT.md` (repo root, local): lazy pagination
+   (3× cost saving), `place_id` threaded into results→tracking
+   (mis-resolution + cost fix), place_id-based roster dedupe, failed-scan
+   quota refund, dead-code deletion.
 2. **Finish the IG Graph (Model A) setup.** (S–M, mostly console work)
    Grab the App Secret + long-lived token (Business Verification passed
    2026-06-28), wire `.env`, re-run the Nike `business_discovery` probe,
