@@ -85,7 +85,13 @@ focused week after the top-3.*
 
 - **Razorpay live** (M + KYC wait): KYC, create the live Pro plan and the
   **Max plan at ₹1,999 (does not exist yet; amounts immutable — create
-  fresh)**, live keys + webhook secret, one real ₹-small end-to-end charge.
+  fresh; decide ANNUAL plans at the same sitting)**, live keys + webhook
+  secret, one real ₹-small end-to-end charge. **Hard gates before going
+  live** (found 2026-07-12, details in `MONEY_TESTS_SPEC.md` W2–W5): wire
+  the Razorpay cancel API (today in-app cancel doesn't stop billing), guard
+  webhook re-activation of cancelled rows, block live tier-changes until
+  cancel+recreate exists, and raise `total_count` from 12 (else every
+  subscriber silently expires to free at month 12).
 - **Legal pages get real content** (M): privacy/terms/refund are
   placeholders by design; finalize via Termly per the deferred plan, flip
   the DPA answers as provider accounts now exist.
