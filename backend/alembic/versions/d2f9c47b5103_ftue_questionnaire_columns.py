@@ -49,8 +49,12 @@ def upgrade() -> None:
     # ``has_website=True``; any with an IG handle is ``has_instagram=True``.
     # Unknown stays NULL so the dashboard can prompt only for genuinely
     # un-asked businesses.
-    op.execute("UPDATE businesses SET has_website = 1 WHERE website IS NOT NULL AND website != ''")
-    op.execute("UPDATE businesses SET has_instagram = 1 WHERE ig_handle IS NOT NULL AND ig_handle != ''")
+    # Use the ``true`` keyword, not ``1`` — SQLite (dev) is typeless and accepts
+    # either, but Postgres (prod) rejects an integer literal for a boolean column
+    # ("column is of type boolean but expression is of type integer"). Caught by
+    # scripts/check_migrations.sh before it could break the first prod deploy.
+    op.execute("UPDATE businesses SET has_website = true WHERE website IS NOT NULL AND website != ''")
+    op.execute("UPDATE businesses SET has_instagram = true WHERE ig_handle IS NOT NULL AND ig_handle != ''")
 
 
 def downgrade() -> None:

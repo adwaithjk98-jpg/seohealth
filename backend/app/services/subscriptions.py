@@ -98,8 +98,21 @@ PLAN_TIER_TO_USER_PLAN: dict[str, UserPlan] = {
     MAX_PLAN_TIER: UserPlan.max,
 }
 _RAZORPAY_API_BASE = "https://api.razorpay.com/v1"
-# 12 cycles ≈ 1 year of monthly billing. Razorpay requires a fixed count.
-_DEFAULT_TOTAL_COUNT = 12
+# W3 — Razorpay requires a fixed cycle count, and marks the subscription
+# ``completed`` once it's reached; our webhook treats ``completed`` as a cancel
+# → every subscriber would be silently dropped to free on that anniversary. At
+# 12 that anniversary is month 12; set it to 120 (10 years of monthly billing)
+# so a real subscriber effectively never auto-expires. The proper fix is
+# renewal-on-``completed``, but a high count removes the launch-blocking cliff.
+_DEFAULT_TOTAL_COUNT = 120
+
+
+class LiveTierChangeUnsupported(Exception):
+    """A user tried to switch tiers (Pro↔Max) while live Razorpay billing is
+    configured. Blocked until cancel-old+create-new is implemented, because
+    falling through to ``create_checkout``'s create path spins up a *second*
+    subscription while the first keeps charging — double-billing (W5). The API
+    maps this to a 409 'contact support to change plans'."""
 
 
 def _now() -> datetime:
@@ -347,9 +360,7 @@ def create_checkout(
 
     if existing is not None and not is_razorpay_configured():
         # Tier change in mock mode (e.g. Pro → Max): flip the existing row and
-        # the user's plan in place. The live-Razorpay tier-change flow (cancel
-        # old + create new) is out of scope until billing is KYC'd; that path
-        # falls through to create a fresh subscription below.
+        # the user's plan in place. Zero external billing, so it's safe.
         existing.plan_tier = plan_tier
         _ensure_user_plan(db, user, PLAN_TIER_TO_USER_PLAN[plan_tier])
         db.commit()
@@ -363,6 +374,17 @@ def create_checkout(
             "short_url": None,
             "already_active": True,
         }
+
+    if existing is not None:
+        # W5 — we only get here with live Razorpay configured (the mock
+        # tier-change path above already returned) and a *different* tier (the
+        # same-tier no-op returned earlier). The live create path below would
+        # spin up a SECOND subscription while ``existing`` keeps charging =
+        # double-billing. Refuse until cancel-old+create-new is implemented.
+        raise LiveTierChangeUnsupported(
+            "Changing plans isn't available yet — please contact support to "
+            "switch tiers."
+        )
 
     if not is_razorpay_configured():
         mock_id = f"sub_mock_{secrets.token_hex(8)}"
@@ -423,12 +445,17 @@ def cancel_active_subscription(db: DbSession, user: User) -> bool:
         "sub_mock_"
     )
     if is_razorpay_configured() and not is_mock and row.razorpay_subscription_id:
-        # TODO(live): call Razorpay subscriptions.cancel(row.razorpay_subscription_id)
-        # here once KYC + live keys land. Until then we only reach this branch
-        # in a misconfigured state, so fall through to the local flip.
-        logger.info(
-            "live cancel requested for %s — local flip only (Razorpay cancel API not wired)",
-            row.razorpay_subscription_id,
+        # W4 — actually tell Razorpay to stop billing. Without this the local
+        # row flips to cancelled but Razorpay keeps charging monthly, and each
+        # subsequent ``subscription.charged`` webhook used to re-upgrade the
+        # user (now blocked by the W2 guard). ``cancel_at_cycle_end: 0`` stops
+        # immediately, matching the local drop-to-free below. If the API call
+        # fails we deliberately DO NOT flip local state — better to surface the
+        # error and let the user retry than to show "cancelled" while money
+        # keeps leaving their account.
+        _razorpay_post(
+            f"/subscriptions/{row.razorpay_subscription_id}/cancel",
+            {"cancel_at_cycle_end": 0},
         )
 
     row.status = SubscriptionStatus.cancelled
@@ -494,6 +521,22 @@ def handle_webhook_event(
             return {
                 "handled": False,
                 "reason": "unknown razorpay_subscription_id",
+            }
+        if row.status == SubscriptionStatus.cancelled:
+            # W2 — Razorpay retries webhooks and does not guarantee ordering. A
+            # delayed/retried ``subscription.charged`` arriving AFTER a
+            # cancellation must NOT resurrect the row (that would restore paid
+            # access with no payment standing). A genuinely new subscription
+            # always gets its own fresh row via checkout, so ignoring this event
+            # for an already-cancelled row drops nothing legitimate.
+            logger.info(
+                "ignoring %s for already-cancelled subscription %s (W2 guard)",
+                event_type,
+                razorpay_subscription_id,
+            )
+            return {
+                "handled": False,
+                "reason": "charged event for cancelled subscription — ignored",
             }
         user = db.get(User, row.user_id)
         if user is None:

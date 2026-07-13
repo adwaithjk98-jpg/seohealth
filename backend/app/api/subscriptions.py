@@ -84,6 +84,10 @@ def start_checkout(
         )
     try:
         result = subs_service.create_checkout(db, user, payload.plan_tier)
+    except subs_service.LiveTierChangeUnsupported as exc:
+        # W5 — live plan switches aren't supported yet; refuse cleanly rather
+        # than double-billing. 409 so the frontend can show "contact support".
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except RuntimeError as exc:
         # Configuration error (e.g. plan id missing) — surface a clean 500
         # so the operator can fix it rather than silently mocking.

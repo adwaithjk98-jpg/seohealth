@@ -31,6 +31,7 @@ from app.services.email_service import (
     send_score_change_email,
 )
 from app.services.pillar_optout import enabled_pillars
+from app.services.scoring import mean_or_none, overall_from_section_scores
 from app.services.prune_old_data import prune_old_audit_data
 from app.services.section_highlight import section_highlight
 from scrapers import (
@@ -164,16 +165,16 @@ def _previous_section_snapshots(
 
 
 def _previous_overall_score(
-    db: Session, business_id: int, current_audit_id: int
+    db: Session, business: Business, current_audit_id: int
 ) -> int | None:
-    """Overall score (mean of non-null section scores) for the most recent
-    completed audit before this one. ``None`` if no prior completed audit
-    exists — first-ever audit has nothing to compare against.
+    """Overall score for the most recent completed audit before this one, using
+    the *same* rule as the live run (``services.scoring``). ``None`` if no prior
+    completed audit exists — first-ever audit has nothing to compare against.
     """
     prev = (
         db.query(Audit)
         .filter(
-            Audit.business_id == business_id,
+            Audit.business_id == business.id,
             Audit.id != current_audit_id,
             Audit.status == AuditStatus.done,
         )
@@ -182,15 +183,15 @@ def _previous_overall_score(
     )
     if prev is None:
         return None
-    # Matches the live run's rule: include all sections (skipped /
-    # soft-failed ones contribute their 0). Previously this excluded
-    # ``failed`` sections to avoid phantom drops in the score-change
-    # notification, but that hid real "still missing your website"
-    # signals from the user. Symmetry with the live calc matters more
-    # than notification quietness — the threshold check below filters
-    # out tiny moves anyway.
-    scores = [s.score for s in prev.sections if s.score is not None]
-    return round(sum(scores) / len(scores)) if scores else None
+    # Same rule as the live calc: score-is-not-None sections (a soft-failed 0
+    # still counts), opted-out pillars excluded. The opt-out exclusion matters
+    # for symmetry — ``new_score`` already drops opted-out pillars, so if the
+    # previous score kept them the delta would compare two different
+    # denominators and fire (or suppress) the email wrongly.
+    return overall_from_section_scores(
+        ((s.section.value, s.score) for s in prev.sections),
+        enabled_pillars(business),
+    )
 
 
 def _maybe_notify_score_change(
@@ -205,7 +206,7 @@ def _maybe_notify_score_change(
     Failures are logged and swallowed: an audit run is already a long-tailed
     operation and a flaky email provider shouldn't take the run with it.
     """
-    previous = _previous_overall_score(db, business.id, current_audit_id)
+    previous = _previous_overall_score(db, business, current_audit_id)
     if previous is None:
         # First-ever completed audit — no baseline to compare against.
         return
@@ -564,7 +565,11 @@ async def run_audit(audit_id: int) -> None:
         # ``competitors_started`` / ``competitors_completed`` stream events
         # are gone with the block.
 
-        overall = round(sum(section_scores) / len(section_scores)) if section_scores else 0
+        # section_scores already holds only score-is-not-None, enabled pillars;
+        # mean_or_none applies the shared empty-case rule (None, never a
+        # misleading 0). In practice this is only reached with a non-empty list
+        # because the Maps-spine gate below fails the audit otherwise.
+        overall = mean_or_none(section_scores)
         audit = db.get(Audit, audit_id)
 
         # An audit only counts as ``done`` if Maps actually loaded — it's
@@ -603,12 +608,15 @@ async def run_audit(audit_id: int) -> None:
         # Phase 3 — fire a "your score changed" email if the overall moved
         # meaningfully vs. the previous completed audit. Runs after the row
         # is marked ``done`` so the email's dashboard link points at a fully
-        # persisted audit. Swallows its own errors.
-        _maybe_notify_score_change(db, business, audit_id, overall)
+        # persisted audit. Swallows its own errors. Guarded on a real score:
+        # a done audit with no measurable+enabled section (overall None) has
+        # nothing to compare or announce — don't email "you're at None/100".
+        if overall is not None:
+            _maybe_notify_score_change(db, business, audit_id, overall)
 
-        # Web-push the owner when a *scheduled* audit completes (manual runs are
-        # already on-screen in the live feed). Best-effort, like the email above.
-        _maybe_push_scheduled_audit_done(db, business, audit, overall)
+            # Web-push the owner when a *scheduled* audit completes (manual runs
+            # are already on-screen in the live feed). Best-effort, like above.
+            _maybe_push_scheduled_audit_done(db, business, audit, overall)
 
         # Opportunistic storage pruning — NULLs heavy raw_data_json payloads
         # on audits older than the retention window so Postgres doesn't

@@ -22,6 +22,7 @@ from app.services.audit_summary import grade_from_score
 from app.services.audit_view import TREND_THRESHOLD
 from app.services.auto_audit import allowed_cadences, next_auto_audit_at
 from app.services.pillar_optout import enabled_pillars
+from app.services.scoring import overall_from_section_scores
 from scrapers.ig_graph import discover_business
 from scrapers.instagram import IG_UNAVAILABLE_NOT_BUSINESS_NOTE
 
@@ -40,20 +41,14 @@ def _trend(current: int | None, previous: int | None) -> str | None:
 
 
 def _audit_overall_score(audit: Audit, business: Business) -> int | None:
-    # Match audit_runner + audit_view: failed sections still contribute
-    # their persisted score (typically 0) so the dashboard tile matches
-    # the overall the user saw on the live-completion screen, and
-    # half-empty audits don't round up by silently excluding gaps. On
-    # top of that, opted-out pillars (FTUE questionnaire) drop out of
-    # the average — a website-less café isn't scored as if a 0/100
-    # website pillar were dragging them down.
-    enabled = enabled_pillars(business)
-    scores = [
-        s.score
-        for s in audit.sections
-        if s.score is not None and s.section.value in enabled
-    ]
-    return round(sum(scores) / len(scores)) if scores else None
+    # One shared rule (services/scoring): mean of sections whose score is not
+    # None (a measured 0 counts, unmeasurable None doesn't; status is never the
+    # filter), with opted-out pillars excluded so a website-less café isn't
+    # scored as if a 0/100 website pillar were dragging it down.
+    return overall_from_section_scores(
+        ((s.section.value, s.score) for s in audit.sections),
+        enabled_pillars(business),
+    )
 
 
 def _latest_two_completed(db: Session, business_id: int) -> list[Audit]:

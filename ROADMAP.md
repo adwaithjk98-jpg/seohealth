@@ -8,34 +8,40 @@ M ≈ 1–2 days, L ≈ 3–5 days.*
 
 ## Do this first — top 3
 
-1. **Verify + close out the discovery→Places migration.** (S–M, was L)
-   *Corrected 2026-07-12: this was written as "not built yet" but commit
-   `d5cd81d` (2026-07-07) already contains the complete native engine —
-   `services/discovery.py` wired into `discovery_scan_job`, filter DSL
-   ported verbatim, Selenium out of requirements, zero remaining callers
-   of `competitor_scraper_adapter.py`.* What actually remains: run one
-   real scan against live Places and check the SKU report (zero Place
-   Details per candidate — the cost trap), then the ranked findings in
-   `PLACES_MIGRATION_CLOSEOUT.md` (repo root, local): lazy pagination
-   (3× cost saving), `place_id` threaded into results→tracking
-   (mis-resolution + cost fix), place_id-based roster dedupe, failed-scan
-   quota refund, dead-code deletion.
+1. **Discovery→Places migration — CLOSED OUT 2026-07-13 (code + runtime-verified).**
+   All eight `PLACES_MIGRATION_CLOSEOUT.md` findings executed: F1+F6 lazy
+   pagination (`search_text_pages` generator; a num_leads=5 scan now bills
+   **1** Text Search request, not 3), F2 `place_id` threaded discovery→track→
+   refresh, F3 place_id-based roster dedupe (catches the `?cid=` regression),
+   F4 failed-scan quota refund, F5 dead adapter/config/comments deleted, F8
+   verified no dead FE fields. Verified live in-process against real Places:
+   **1 Text Search call, 0 Place Details calls, place_id 15/15** — the cost
+   guardrail holds. Offline + in-memory-DB tests cover the pagination + dedupe
+   logic. **One gate remains, owner-only:** confirm the Cloud Console SKU
+   report shows Text Search (Enterprise) ≈ pages fetched and **zero** Place
+   Details attributable to discovery (billing-side ground truth for the
+   runtime measurement). Optional: full browser render+track E2E (costs a few
+   more live calls).
 2. **Finish the IG Graph (Model A) setup.** (S–M, mostly console work)
    Grab the App Secret + long-lived token (Business Verification passed
    2026-06-28), wire `.env`, re-run the Nike `business_discovery` probe,
    confirm a real audit populates the IG pillar and a competitor refresh
    writes follower counts. Without this, one of five pillars reads
    "unavailable" for every user on day one.
-3. **A minimal pytest harness around the money-logic.** (M)
-   Not coverage theatre — ~25 tests on the four things that keep breaking
-   or would be catastrophic: overall-score aggregation rules
-   (None-vs-0, opt-outs, the "0s but 85" regression), tier limits + quota
-   windows (402/429 shapes), Razorpay webhook transitions (activate /
-   cancel / past-due, bad signature), and audit status gating (Maps-failed
-   ⇒ audit failed ⇒ quota refunded). Run against SQLite in-memory; add an
-   `alembic upgrade head` check against a throwaway Postgres container to
-   kill the dev/prod migration drift class. Everything after this gets
-   cheaper and safer.
+3. **Money-logic pytest harness — LARGELY DONE 2026-07-13.** `backend/tests/`
+   (conftest + 4 suites, 31 passing / 3 tracked skips): overall-score
+   aggregation (incl. the "0s but 85" regression), tier limits + quota
+   windows (402/429), Razorpay webhook transitions + bad-signature, audit
+   status gating (on_failure hook). Also **unified the 5 drifted overall-score
+   aggregation sites** into `services/scoring.py` (finding #1) and applied the
+   **W2–W5 live-billing fixes** (resurrect-after-cancel guard, cancel-API wired,
+   live tier-change blocked 409, total_count 12→120) — all inert in mock mode,
+   so the beta is unaffected; they turn "go live" into a config flip.
+   `scripts/check_migrations.sh` (alembic vs models vs throwaway Postgres 16)
+   **found + fixed two latent prod-fatal migrations** (`has_website = 1` int-for-
+   bool; enum `ALTER TYPE` autocommit-in-txn). Remaining: the 3 skipped
+   pipeline-integration tests (Maps-spine gate / non-spine soft-fail / carried
+   check-marks) need a scraper-mocking harness — deferred, not faked.
 
 ## Phase 1 — Deploy-ready (private beta on the VPS)
 

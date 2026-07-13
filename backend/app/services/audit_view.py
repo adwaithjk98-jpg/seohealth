@@ -27,6 +27,7 @@ from app.services.audit_summary import (
 )
 from app.services.fix_verifier import verify as verify_fix_signal
 from app.services.pillar_optout import enabled_pillars
+from app.services.scoring import mean_or_none
 
 
 SECTION_ORDER = ["maps", "website", "performance", "instagram", "nap", "competitors"]
@@ -82,7 +83,7 @@ def _previous_section_scores(
         # drag the previous overall either.
         if sec.score is not None and sec.section.value in enabled:
             scores.append(sec.score)
-    overall = round(sum(scores) / len(scores)) if scores else None
+    overall = mean_or_none(scores)
     return by_section, overall
 
 
@@ -263,9 +264,7 @@ def build_audit_detail(db: Session, audit: Audit) -> dict:
         key=lambda s: SECTION_ORDER.index(s["section"]) if s["section"] in SECTION_ORDER else 999
     )
 
-    overall_score: int | None = (
-        round(sum(section_scores) / len(section_scores)) if section_scores else None
-    )
+    overall_score: int | None = mean_or_none(section_scores)
 
     # Counts respect the same opt-out filter as the per-section lists —
     # the "6 to go" badge on the dashboard would otherwise count fixes

@@ -12,6 +12,15 @@ dependencies = [
     "pydantic-settings==2.7.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    # For scripts/check_migrations.sh — the drift check runs migrations against
+    # a throwaway Postgres (dev itself is SQLite, so this isn't a runtime dep).
+    "psycopg2-binary>=2.9",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -19,3 +28,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

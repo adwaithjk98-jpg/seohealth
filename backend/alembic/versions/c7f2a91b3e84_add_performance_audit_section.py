@@ -5,11 +5,15 @@ Insights API) persists its results as an ``audit_sections`` row like every
 other pillar, so the native Postgres enum needs the new label before any
 audit can write it.
 
-Postgres: ``ALTER TYPE ... ADD VALUE`` cannot run inside a transaction
-block on older servers, and even on PG 12+ the freshly-added value can't be
-used in the same transaction. Alembic wraps each migration in a transaction,
-so we grab the raw DBAPI connection and issue the ALTER with autocommit.
-``IF NOT EXISTS`` makes the migration idempotent / re-runnable.
+Postgres: on PG 12+ (prod is PG 16) ``ALTER TYPE ... ADD VALUE`` runs fine
+inside Alembic's transaction — the only restriction is that the new value
+can't be *used* in that same transaction, and we don't (no rows are written
+here). ``IF NOT EXISTS`` makes it idempotent / re-runnable. Earlier revisions
+of this migration tried to flip the connection to autocommit or open a second
+connection; both fail — psycopg2 forbids autocommit mid-transaction, and a
+separate connection can't see the enum type created earlier in this same
+still-uncommitted Alembic transaction. (Verified by scripts/check_migrations.sh
+against Postgres 16.)
 
 SQLite: SQLAlchemy 2.0 renders ``Enum`` without a CHECK constraint by
 default (``create_constraint=False``), so the column is plain VARCHAR and
@@ -36,18 +40,9 @@ def upgrade() -> None:
         # CHECK constraint, so there's nothing to migrate.
         return
 
-    # ALTER TYPE ... ADD VALUE must run outside a transaction. Use the raw
-    # psycopg connection in autocommit so it isn't swept into Alembic's txn.
-    raw = bind.connection.connection  # DBAPI connection
-    old_autocommit = raw.autocommit
-    raw.autocommit = True
-    try:
-        with raw.cursor() as cur:
-            cur.execute(
-                "ALTER TYPE audit_section_name ADD VALUE IF NOT EXISTS 'performance'"
-            )
-    finally:
-        raw.autocommit = old_autocommit
+    # PG 12+ allows this inside Alembic's transaction; we never use the value
+    # in this migration, so the same-transaction restriction doesn't apply.
+    op.execute("ALTER TYPE audit_section_name ADD VALUE IF NOT EXISTS 'performance'")
 
 
 def downgrade() -> None:
