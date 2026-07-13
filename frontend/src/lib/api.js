@@ -143,12 +143,15 @@ export async function listCompetitors(businessId) {
  */
 export async function addCompetitor(
   businessId,
-  { maps_url, name, instagram_url, website_url }
+  { maps_url, name, instagram_url, website_url, google_place_id }
 ) {
   const body = { maps_url };
   if (name) body.name = name;
   if (instagram_url) body.instagram_url = instagram_url;
   if (website_url) body.website_url = website_url;
+  // Forwarded from a Discovery Scan result so the first refresh pins the exact
+  // listing instead of re-resolving by name+city (PLACES_MIGRATION_CLOSEOUT F2).
+  if (google_place_id) body.google_place_id = google_place_id;
   const res = await fetch(`/api/businesses/${businessId}/competitors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

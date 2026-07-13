@@ -9,10 +9,11 @@ One row per user-initiated Discovery Scan. Doubles as:
 * the **result store** for the GET endpoint that the frontend polls once
   the worker writes ``results_json``.
 
-We persist all attempts (including failed ones) so a 10-second double-click
-can't trick the rate limiter — paid users get *one chance per month*, full
-stop. A retry button after a failed run is a product decision that needs an
-explicit re-arm policy, not a free pass.
+We persist every attempt, but the rate limiter (``services.discovery_scan.
+count_scans_this_month``) counts only ``pending`` / ``running`` / ``done`` rows
+— a 10-second double-click still can't beat the cap (the pending row counts),
+while a ``failed`` scan (post-Places-migration ≈ our infra fell over, not the
+user's fault) is refunded rather than burning the user's one monthly slot.
 """
 
 from datetime import datetime

@@ -16,14 +16,18 @@ tier at no extra cost. We deliberately NEVER request ``reviews`` (review text is
 the pricier Atmosphere SKU) — the aggregate rating + count is all the audit uses.
 
 Cost guardrail (memory ``places_api_cost_guardrail``): callers must NOT loop
-:func:`place_details` per discovery candidate. Discovery lives in the separate
-``audit_scraper`` engine; this module only serves the audit + competitor paths,
-which read exactly one place each.
+:func:`place_details` per discovery candidate. Discovery (``services.discovery``)
+sources candidates from :func:`search_text_pages` — a handful of Text Search
+requests total — and reads every field it needs straight off those results; the
+audit + competitor paths read exactly one place each. Nothing here fans
+:func:`place_details` out across candidates.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,6 +58,7 @@ _SEARCH_FIELD_MASK = ",".join(
 # Text Search caps at 20 results/page and 60 total (3 pages via nextPageToken).
 _SEARCH_PAGE_SIZE = 20
 _SEARCH_MAX_RESULTS = 60
+_SEARCH_MAX_PAGES = _SEARCH_MAX_RESULTS // _SEARCH_PAGE_SIZE  # 3
 
 # Places API (New) returns at most this many photo references per place, so
 # ``photo_count`` saturates here — we can tell "few" from "plenty" but not an
@@ -172,35 +177,37 @@ async def place_details(place_id: str) -> PlaceRecord | None:
     )
 
 
-async def search_text(query: str, *, max_results: int = 1) -> list[PlaceRecord]:
-    """Resolve places from a free-text query (e.g. ``"<name> <city>"``).
+async def search_text_pages(query: str) -> AsyncIterator[list[PlaceRecord]]:
+    """Yield Text Search result pages (≤20 records each, ≤3 pages) lazily.
 
-    ``max_results=1`` (default) is the audit/self-heal use — one best match.
-    Discovery passes a higher ``max_results`` (up to ``_SEARCH_MAX_RESULTS``=60)
-    and paginates via ``nextPageToken`` (≤20/page). Each request is one billed
-    Text Search call, so cost ≈ pages fetched — NEVER a Place Details per
-    candidate (that's the cost guardrail). Returns an empty list when nothing
-    matched; raises :class:`PlacesUnavailable` on an API/network failure.
+    Each yielded page is exactly **one billed Text Search request**. Callers
+    that only need a handful of results should ``break`` out of the iteration as
+    soon as they have enough — that early stop is the discovery cost lever
+    (PLACES_MIGRATION_CLOSEOUT F1): a typical scan needs one page, not three.
+    Always requests the full ``_SEARCH_PAGE_SIZE`` per page and lets the caller
+    trim, because cost is per-request, not per-result (F6 — never shrink a page
+    to save "results"; a 5-result page bills the same as a 20-result one).
+
+    Raises :class:`PlacesUnavailable` on a missing key or an API/network
+    failure; yields nothing for an empty query.
     """
     if not settings.places_api_key:
         raise PlacesUnavailable("PLACES_API_KEY is not configured")
     if not query or not query.strip():
-        return []
+        return
 
-    want = max(1, min(max_results, _SEARCH_MAX_RESULTS))
     headers = {
         "X-Goog-Api-Key": settings.places_api_key,
         "X-Goog-FieldMask": _SEARCH_FIELD_MASK,
         "Content-Type": "application/json",
     }
-    records: list[PlaceRecord] = []
     page_token: str | None = None
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-            while len(records) < want:
+            for _ in range(_SEARCH_MAX_PAGES):
                 body: dict[str, Any] = {
                     "textQuery": query.strip(),
-                    "pageSize": min(_SEARCH_PAGE_SIZE, want - len(records)),
+                    "pageSize": _SEARCH_PAGE_SIZE,
                 }
                 # When paginating, textQuery must stay identical to page 1.
                 if page_token:
@@ -214,11 +221,30 @@ async def search_text(query: str, *, max_results: int = 1) -> list[PlaceRecord]:
                         f"{_error_detail(resp)}"
                     )
                 data = resp.json()
-                records.extend(_normalize(p) for p in (data.get("places") or []))
+                page = [_normalize(p) for p in (data.get("places") or [])]
+                if page:
+                    yield page
                 page_token = data.get("nextPageToken")
                 if not page_token:
                     break
     except httpx.HTTPError as exc:
         raise PlacesUnavailable(f"Text Search request failed: {exc}") from exc
 
+
+async def search_text(query: str, *, max_results: int = 1) -> list[PlaceRecord]:
+    """Resolve up to ``max_results`` places from a free-text query.
+
+    ``max_results=1`` (default) is the audit/self-heal use — one best match.
+    Thin eager wrapper over :func:`search_text_pages`: fetches pages only until
+    it has ``max_results`` records, then stops. Discovery uses the generator
+    directly so it can qualify + stop even earlier. Returns an empty list when
+    nothing matched; raises :class:`PlacesUnavailable` on an API/network failure.
+    """
+    want = max(1, min(max_results, _SEARCH_MAX_RESULTS))
+    records: list[PlaceRecord] = []
+    async with aclosing(search_text_pages(query)) as pages:
+        async for page in pages:
+            records.extend(page)
+            if len(records) >= want:
+                break
     return records[:want]

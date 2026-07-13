@@ -9,8 +9,9 @@ class DiscoveryScanCreateRequest(BaseModel):
 
     All fields except ``query`` have sensible defaults so the smallest
     possible payload (`{"query": "cafes in Kochi"}`) succeeds. ``fields``
-    is passed through to the audit_scraper subprocess verbatim — the
-    engine accepts any column it knows how to populate.
+    names the columns each result dict should carry; the native discovery
+    engine (``services.discovery``) serves them from the Places Text Search
+    response, with ``instagram_url`` filled by a best-effort website probe.
 
     The default deliberately includes ``instagram_url`` and ``website``:
     the trackCard payload forwards both onto the Competitor row, and

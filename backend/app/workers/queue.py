@@ -18,8 +18,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Selenium audits should never legitimately take 10 minutes. Anything
-# longer means Chrome hung or a scraper is stuck — let RQ kill it.
+# An audit is a handful of bounded API calls (Places, PageSpeed, Instagram) —
+# it should never legitimately take 10 minutes. Anything longer means a client
+# is wedged on a hung connection; let RQ kill it.
 _JOB_TIMEOUT_SECONDS = 600
 
 # Match audit_events.py — same stream key + same MAXLEN policy. If those
@@ -35,13 +36,15 @@ redis_conn = Redis.from_url(settings.redis_url)
 audit_queue = Queue("audits", connection=redis_conn)
 
 # Phase 4 — low-priority queue for heavy competitor work (cache refreshes
-# and Discovery Scans). Routed to a dedicated worker process so a half-hour
-# Selenium discovery run can't starve a user's live self-audit. See
+# and Discovery Scans). Routed to a dedicated worker process so a batch
+# discovery scan can't starve a user's live self-audit. See
 # ``scripts/run_competitor_worker.py``.
 competitor_queue = Queue("competitor_jobs", connection=redis_conn)
 
-# Cache refreshes are short (one Maps page) but Discovery Scans can run for
-# 10+ minutes. The latter sets the ceiling.
+# A cache refresh is one Places lookup; a Discovery Scan is a few Text Search
+# requests plus bounded website→IG enrichment. Both are quick now that the
+# engine is pure-API (no browser) — these ceilings are generous safety nets for
+# a wedged HTTP client, not expected runtimes.
 _COMPETITOR_REFRESH_TIMEOUT_SECONDS = 180
 _DISCOVERY_SCAN_TIMEOUT_SECONDS = 60 * 30
 
@@ -70,7 +73,7 @@ def on_audit_job_failure(job, connection, exc_type, exc_value, traceback) -> Non
 
     The runner's own try/except handles Python-level exceptions and writes
     ``audits.status=failed`` + publishes ``audit_failed`` before re-raising.
-    But it can't catch signal-level deaths (Selenium-Chrome SIGSEGV, OOM
+    But it can't catch signal-level deaths (a segfault in a C extension, OOM
     kills, container restarts mid-run) — those kill the worker process
     before any Python code runs. RQ still notices the dead job and invokes
     this callback, so this is the last line of defence: it makes sure the

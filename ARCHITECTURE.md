@@ -27,8 +27,8 @@ Browser (PWA) ──/api──> FastAPI ──enqueue──> Redis ── RQ ─
                                                     ▲
               rq-scheduler (hourly/daily/weekly crons) ┘
 Data sources: Places API (New) · PageSpeed API · IG Graph business_discovery
-              · plain httpx website fetch · [Selenium only inside the
-              external audit_scraper subprocess — discovery only]
+              · plain httpx website fetch — no browser anywhere
+              (discovery is native Places as of 2026-07-13)
 ```
 
 ## What's genuinely solid (don't churn this)
@@ -41,7 +41,7 @@ Data sources: Places API (New) · PageSpeed API · IG Graph business_discovery
   live-diff highlights, FTUE pillar opt-outs persisted as placeholders.
   This is the most battle-hardened code in the repo.
 - **The queue/event topology.** Two queues (`audits`, `competitor_jobs`)
-  keep a 30-minute discovery run from starving a live audit; discovery jumps
+  keep a batch discovery scan from starving a live audit; discovery jumps
   its own queue (`at_front`) for the user who clicked. The stream key is
   created *before* enqueue so a fast SSE subscriber can't race the worker;
   `on_audit_job_failure` is a correct last line of defence against
@@ -64,13 +64,14 @@ Data sources: Places API (New) · PageSpeed API · IG Graph business_discovery
 
 ## What's fragile (ranked by how hard it bites)
 
-1. **Discovery still runs the forked Selenium engine as a subprocess**
-   (`services/competitor_scraper_adapter.py` → sibling repo at
-   `AUDIT_SCRAPER_PATH`). Decided on 2026-06-24 to move discovery to Places
-   **Text Search** before deploy — not built yet. Until it is: the deploy
-   needs Chrome + a second repo + its own venv on the VPS, from a datacenter
-   IP that Google will throttle, competing for the 1 vCPU / 4 GB box. This
-   is the single biggest gap between "works on the Mac" and "launchable".
+1. ~~Discovery ran a forked Selenium engine as a subprocess.~~
+   **✅ RESOLVED 2026-07-13.** Discovery is now the native Places
+   `search_text_pages` engine (`services/discovery.py`); the adapter and
+   `AUDIT_SCRAPER_PATH` config are deleted — no Chrome, no second repo, no
+   separate venv on the VPS. Closed out per `PLACES_MIGRATION_CLOSEOUT.md`
+   (F1–F8) and verified live (1 Text Search call, 0 Place Details, place_id
+   15/15). Only the owner's Cloud Console SKU-report confirmation remains.
+   *(The current biggest gap is now #2, the missing test suite.)*
 2. **No automated test suite.** Only manual scripts (`scripts/test_*.py`).
    The regression-prone money-logic — overall-score aggregation (the
    recurring "0s but 85 overall" bug), tier limits, weekly quota windows,
@@ -129,9 +130,9 @@ Better than the older docs suggest. The audit path is now pure async HTTP
 (Places, PageSpeed, Graph, httpx) — no Chrome, so the old "2 GB will OOM
 mid-audit" and proxy-cost warnings in `launch_checklist.md` are stale for
 audits. CPU load is I/O-bound waiting, and the hourly `id % 24` bucketing
-spreads scheduled audits. The only heavyweight left is the Selenium
-discovery subprocess — which is also first in line to be replaced. After
-that migration, the whole stack (api + 2 workers + scheduler + Postgres +
-Redis + Caddy) fits the box with room; the realistic ceiling becomes
+spreads scheduled audits. Discovery is now native Places too (no Chrome
+anywhere as of 2026-07-13), so nothing heavyweight remains: the whole stack
+(api + 2 workers + scheduler + Postgres + Redis + Caddy) fits the box with
+room; the realistic ceiling becomes
 Postgres connections and PageSpeed API latency, neither of which matters at
 launch scale.

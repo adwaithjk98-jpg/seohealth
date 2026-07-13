@@ -14,12 +14,20 @@ class CompetitorCreateRequest(BaseModel):
     ``instagram_url`` and ``website_url`` are optional pre-seeds for the
     manual-add modal — they let the audit-side scraper skip the
     Maps-listing → social-link extraction on the first observation.
+
+    ``google_place_id`` is an optional pre-seed from a Discovery Scan result:
+    discovery already resolved the exact Places id, so forwarding it lets the
+    very first refresh pin that precise listing via a cheap Place Details call
+    instead of re-resolving by name+city — which can match the wrong branch and
+    silently track it forever (PLACES_MIGRATION_CLOSEOUT F2). Omitted by the
+    manual-add modal, which has no id to offer.
     """
 
     maps_url: str = Field(min_length=8, max_length=1024)
     name: str | None = Field(default=None, max_length=255)
     instagram_url: str | None = Field(default=None, max_length=1024)
     website_url: str | None = Field(default=None, max_length=1024)
+    google_place_id: str | None = Field(default=None, max_length=255)
 
 
 class CompetitorObservationResponse(BaseModel):

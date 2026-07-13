@@ -64,10 +64,16 @@ def _current_month_window(now: datetime) -> tuple[datetime, datetime]:
 
 
 def count_scans_this_month(db: DbSession, user: User) -> int:
-    """How many Discovery Scans this user has requested in the current month.
+    """How many Discovery Scans this user has *consumed* quota for this month.
 
-    Counts all rows regardless of status — see module docstring on why
-    failed attempts still consume quota.
+    Counts ``pending`` / ``running`` / ``done`` rows and deliberately excludes
+    ``failed``. Post-Places-migration a failed scan means our infrastructure
+    fell over (``DiscoveryError`` ≈ Places unavailable), not that the user got
+    what they paid for — charging their one monthly scan for a Google outage is
+    unfair, and the audit pipeline already refunds quota the same way
+    (PLACES_MIGRATION_CLOSEOUT F4). Still counting the non-terminal
+    ``pending``/``running`` rows preserves the double-tap protection the
+    pending-row-before-enqueue design exists for.
     """
     start, end = _current_month_window(_now_naive())
     return (
@@ -76,6 +82,7 @@ def count_scans_this_month(db: DbSession, user: User) -> int:
             DiscoveryScan.user_id == user.id,
             DiscoveryScan.requested_at >= start,
             DiscoveryScan.requested_at < end,
+            DiscoveryScan.status != DiscoveryScanStatus.failed,
         )
         .count()
     )

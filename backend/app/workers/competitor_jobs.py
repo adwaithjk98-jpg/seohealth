@@ -9,12 +9,12 @@ Two kinds of work land here:
   to let the *next* audit serve this URL for free instead of re-fetching.
 
 * ``discovery_scan_job(scan_id)`` — fired by the API when a paid user kicks
-  off a Discovery Scan. Loads the ``discovery_scans`` row, shells out to
-  ``audit_scraper`` via the adapter, and writes results + status back.
+  off a Discovery Scan. Loads the ``discovery_scans`` row, runs the native
+  Places discovery engine (``services.discovery``), and writes results +
+  status back.
 
 Both run on the dedicated competitor worker process (``run_competitor_worker``)
-so a 10-minute Selenium discovery run can't share a CPU with a user's live
-self-audit.
+so a batch discovery scan can't share a CPU with a user's live self-audit.
 """
 
 from __future__ import annotations
@@ -278,12 +278,19 @@ def _filter_out_own_roster(
 
     Discovery was happily returning the user's own anchor business as the
     #1 "similar" result — and would do the same with already-tracked
-    competitors. Neither is useful. We dedupe on two signals so the
-    scraper's variable naming/URL formats don't slip through:
+    competitors. Neither is useful. We dedupe on three signals, in order of
+    reliability:
 
-    * ``maps_url`` exact match (after the scraper's own dedup wouldn't
-      catch these — the user's row may have a different URL shape).
-    * ``name`` normalised (whitespace-collapsed lowercase) match.
+    * ``place_id`` exact match — the real key. Discovery now carries the
+      Places id on every lead (F2), and both ``Business`` and ``Competitor``
+      store ``google_place_id``, so identical listings match regardless of
+      URL shape. This replaces the ``maps_url`` match that silently regressed
+      once discovery switched from Selenium ``/maps/place/…`` URLs to Places
+      ``?cid=…`` URIs (PLACES_MIGRATION_CLOSEOUT F3).
+    * ``maps_url`` exact match — kept as a cheap extra signal for older rows
+      that predate ``google_place_id`` (harmless when it doesn't fire).
+    * ``name`` normalised (whitespace-collapsed lowercase) — the last-resort
+      fallback when neither id nor URL is on hand.
 
     Matching against archived rows on purpose: a user who archived a
     competitor and re-ran discovery probably doesn't want to see them
@@ -291,22 +298,30 @@ def _filter_out_own_roster(
     """
     blocked_urls: set[str] = set()
     blocked_names: set[str] = set()
-    for biz in db.query(Business).filter(Business.user_id == user_id).all():
+    blocked_place_ids: set[str] = set()
+    businesses = db.query(Business).filter(Business.user_id == user_id).all()
+    for biz in businesses:
         if biz.maps_url:
             blocked_urls.add(biz.maps_url)
+        if biz.google_place_id:
+            blocked_place_ids.add(biz.google_place_id)
         blocked_names.add(_norm_name(biz.name))
-    business_ids = [b.id for b in db.query(Business).filter(Business.user_id == user_id).all()]
+    business_ids = [b.id for b in businesses]
     if business_ids:
         for comp in (
             db.query(Competitor).filter(Competitor.business_id.in_(business_ids)).all()
         ):
             if comp.maps_url:
                 blocked_urls.add(comp.maps_url)
+            if comp.google_place_id:
+                blocked_place_ids.add(comp.google_place_id)
             blocked_names.add(_norm_name(comp.name))
     blocked_names.discard("")
 
     kept: list[dict] = []
     for lead in leads:
+        if lead.get("place_id") and lead["place_id"] in blocked_place_ids:
+            continue
         if lead.get("maps_url") and lead["maps_url"] in blocked_urls:
             continue
         if _norm_name(lead.get("name")) in blocked_names:
@@ -321,10 +336,12 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
     State machine:
       ``pending`` → ``running`` → (``done`` | ``failed``)
 
-    The row is the source of truth for the rate limiter — exiting in any
-    terminal state is fine (the limiter counts all rows in the current
-    month, not just successful ones). What we must not do is leave a row
-    stuck at ``running`` forever, so any exception flips it to ``failed``
+    The row is the source of truth for the rate limiter — but as of the
+    Places migration the limiter no longer counts ``failed`` rows (a Places
+    outage shouldn't burn the user's one monthly scan; see
+    ``services.discovery_scan.count_scans_this_month``), so flipping a doomed
+    scan to ``failed`` also refunds its quota. What we must not do is leave a
+    row stuck at ``running`` forever, so any exception flips it to ``failed``
     before re-raising for RQ.
     """
     db = SessionLocal()
@@ -360,7 +377,12 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
             db.commit()
             raise
 
-        filtered = _filter_out_own_roster(db, scan.user_id, results)
+        # The engine returns a small headroom buffer beyond ``num_leads`` so
+        # this roster dedupe doesn't leave the user short (discovery F1); trim
+        # back to what they actually asked for once the self/roster rows are out.
+        deduped = _filter_out_own_roster(db, scan.user_id, results)
+        dropped_self = len(results) - len(deduped)
+        filtered = deduped[: scan.num_leads]
         scan.status = DiscoveryScanStatus.done
         scan.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
         scan.result_count = len(filtered)
@@ -371,7 +393,7 @@ def discovery_scan_job(scan_id: int) -> dict[str, int | str]:
             "scan_id": scan_id,
             "status": "done",
             "result_count": len(filtered),
-            "dropped_self": len(results) - len(filtered),
+            "dropped_self": dropped_self,
         }
     except Exception:
         # Catch-all: ensure no row stays at ``running`` if anything unusual

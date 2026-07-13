@@ -32,11 +32,21 @@ import re
 
 import httpx
 from bs4 import BeautifulSoup
+from contextlib import aclosing
 
-from scrapers.places import PlaceRecord, PlacesUnavailable, search_text
+from scrapers.places import PlaceRecord, PlacesUnavailable, search_text_pages
 from scrapers.website import DEFAULT_USER_AGENT, _extract_instagram_handle
 
 logger = logging.getLogger(__name__)
+
+# Discovery returns a small buffer beyond ``num_leads`` so the caller's
+# post-hoc roster dedupe (``competitor_jobs._filter_out_own_roster``, which
+# drops the user's own business + already-tracked rivals *after* the engine
+# returns) doesn't leave the user short of what they asked for. The RQ job
+# caps the deduped list back down to ``num_leads`` (PLACES_MIGRATION_CLOSEOUT
+# F1). Only used when there are no enrichment filters — otherwise we keep the
+# full sourced buffer for enrichment rejections to backfill against.
+_ROSTER_DEDUPE_HEADROOM = 10
 
 
 class DiscoveryError(RuntimeError):
@@ -211,8 +221,18 @@ def _record_to_dict(rec: PlaceRecord, fields: list[str]) -> dict:
     ``instagram_url`` starts as ``None`` and is filled by enrichment. Fields
     Places can't supply (email, followers, facebook_url, …) stay ``None`` — the
     old engine scraped those with Selenium; unsupported in the API-only path.
+
+    ``place_id`` is always attached as a metadata key, independent of the
+    requested ``fields``: we already hold the exact Places id at scan time, and
+    threading it to the track path lets a tracked ``Competitor`` pin the precise
+    listing (cheap Place Details) instead of re-resolving by name+city on first
+    refresh — which can silently match the wrong branch and pin it forever
+    (PLACES_MIGRATION_CLOSEOUT F2). Old scans predate this key, so consumers
+    must ``.get('place_id')`` and fall back to the name+city search path.
     """
-    return {field: _base_value(rec, field) for field in fields}
+    result = {field: _base_value(rec, field) for field in fields}
+    result["place_id"] = rec.place_id
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -265,37 +285,46 @@ async def discover_competitors(
     are the keys each result dict must carry. ``filters`` is the DSL string.
     Raises :class:`DiscoveryError` if Places is unavailable.
     """
-    try:
-        records = await search_text(query, max_results=60)
-    except PlacesUnavailable as exc:
-        raise DiscoveryError(f"Places Text Search unavailable: {exc}") from exc
-
     parsed = parse_filters(filters)
     maps_filters = [f for f in parsed if f["field"] in MAPS_DATA_KEYS]
     enrichment_filters = [f for f in parsed if f["field"] not in MAPS_DATA_KEYS]
     need_ig = "instagram_url" in fields or any(
         f["field"] == "instagram_url" for f in enrichment_filters
     )
+    target_buffer = num_leads + _ROSTER_DEDUPE_HEADROOM
 
-    # Stage 1: qualify against Maps-level filters, in relevance order. When
-    # there are no enrichment filters, nothing downstream can reject, so cap
-    # early at num_leads; otherwise keep the full maps-qualified buffer so
-    # enrichment rejections can still be backfilled up to num_leads.
+    # Stage 1: source candidates page-by-page (Google's relevance order) and
+    # qualify each against the Maps-level filters as it arrives. With no
+    # enrichment filters, nothing downstream can reject a maps-qualified lead,
+    # so we stop paginating the moment we have ``target_buffer`` of them —
+    # usually one Text Search page instead of three (cost lever F1; Text Search
+    # bills per request, not per result). With enrichment filters, later stages
+    # can still reject, so we drain every available page to keep the full buffer
+    # for enrichment rejections to backfill against.
     maps_qualified: list[dict] = []
-    for rec in records:
-        lead = _record_to_dict(rec, fields)
-        if all(evaluate_filter(lead, f) for f in maps_filters):
-            maps_qualified.append(lead)
-            if not enrichment_filters and len(maps_qualified) >= num_leads:
-                break
+    sourced = 0
+    try:
+        async with aclosing(search_text_pages(query)) as pages:
+            async for page in pages:
+                sourced += len(page)
+                for rec in page:
+                    lead = _record_to_dict(rec, fields)
+                    if all(evaluate_filter(lead, f) for f in maps_filters):
+                        maps_qualified.append(lead)
+                if not enrichment_filters and len(maps_qualified) >= target_buffer:
+                    break
+    except PlacesUnavailable as exc:
+        raise DiscoveryError(f"Places Text Search unavailable: {exc}") from exc
 
-    consider = maps_qualified if enrichment_filters else maps_qualified[:num_leads]
+    consider = maps_qualified if enrichment_filters else maps_qualified[:target_buffer]
 
     # Stage 2: best-effort IG enrichment for the candidates we might return.
     if need_ig:
         await _enrich_instagram(consider)
 
-    # Stage 3: apply enrichment-level filters + cap at num_leads.
+    # Stage 3: apply enrichment-level filters + cap at the buffer. The RQ job
+    # trims to ``num_leads`` after dropping the user's own roster, so returning
+    # this small headroom is what keeps that dedupe from starving the result.
     results: list[dict] = []
     for lead in consider:
         if enrichment_filters and not all(
@@ -303,13 +332,13 @@ async def discover_competitors(
         ):
             continue
         results.append(lead)
-        if len(results) >= num_leads:
+        if len(results) >= target_buffer:
             break
 
     logger.info(
         "discovery: query=%r sourced=%d maps_qualified=%d returned=%d",
         query,
-        len(records),
+        sourced,
         len(maps_qualified),
         len(results),
     )

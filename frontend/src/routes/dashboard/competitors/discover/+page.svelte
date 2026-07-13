@@ -325,7 +325,10 @@
         // counts (no website_url scrape — kept on the row for the
         // hub's deep-dive link).
         instagram_url: result.instagram_url || undefined,
-        website_url: result.website || result.website_url || undefined
+        website_url: result.website || result.website_url || undefined,
+        // Discovery already resolved the exact Places id — pin it so the first
+        // refresh reads this precise listing instead of re-searching by name.
+        google_place_id: result.place_id || undefined
       });
       cardState = { ...cardState, [key]: 'tracked' };
       showToast(`${result.name || 'Competitor'} added`);

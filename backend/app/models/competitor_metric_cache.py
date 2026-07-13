@@ -1,8 +1,8 @@
 """Global cross-user cache for competitor Maps metrics (Phase 4 cost defense).
 
 Two unrelated users tracking the same place ("Bakehouse Cafe") would otherwise
-hit Selenium for the same Maps URL once per audit. This table holds one row per
-distinct (normalized) ``maps_url`` with the last-known rating + review_count
+each bill a Places lookup for the same Maps URL once per audit. This table holds
+one row per distinct (normalized) ``maps_url`` with the last-known rating + review_count
 and a ``last_scraped_at`` timestamp. ``services.competitor_cache`` reads it on
 the way in and writes back on the way out.
 

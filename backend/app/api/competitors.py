@@ -285,6 +285,11 @@ def add_competitor(
         web_override = (payload.website_url or "").strip()
         if web_override:
             existing_archived.website_url = web_override
+        pid_override = (payload.google_place_id or "").strip()
+        if pid_override:
+            # A fresh discovery id is authoritative — it even corrects a
+            # previously self-healed id that pinned the wrong branch (F2).
+            existing_archived.google_place_id = pid_override
         db.commit()
         db.refresh(existing_archived)
         _kick_first_refresh(existing_archived.maps_url)
@@ -324,12 +329,14 @@ def add_competitor(
     name = (payload.name or "").strip() or "Competitor"
     instagram_url = (payload.instagram_url or "").strip() or None
     website_url = (payload.website_url or "").strip() or None
+    google_place_id = (payload.google_place_id or "").strip() or None
     competitor = Competitor(
         business_id=business.id,
         name=name,
         maps_url=maps_url,
         instagram_url=instagram_url,
         website_url=website_url,
+        google_place_id=google_place_id,
     )
     db.add(competitor)
     db.commit()
