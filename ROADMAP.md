@@ -22,12 +22,14 @@ M ≈ 1–2 days, L ≈ 3–5 days.*
    Details attributable to discovery (billing-side ground truth for the
    runtime measurement). Optional: full browser render+track E2E (costs a few
    more live calls).
-2. **Finish the IG Graph (Model A) setup.** (S–M, mostly console work)
-   Grab the App Secret + long-lived token (Business Verification passed
-   2026-06-28), wire `.env`, re-run the Nike `business_discovery` probe,
-   confirm a real audit populates the IG pillar and a competitor refresh
-   writes follower counts. Without this, one of five pillars reads
-   "unavailable" for every user on day one.
+2. **IG Graph (Model A) — DONE 2026-07-13.** Now on a **never-expiring System
+   User token** (upgraded from the 2026-06-29 ~60-day user token). App Secret +
+   token in `backend/.env`, `ig_token.py` confirmed `SYSTEM_USER` / expires
+   never / all 4 scopes; Nike + natgeo + seo.health `business_discovery` probes
+   all return `source=graph`, and `audit_instagram` (the single chokepoint for
+   both the user's own IG pillar and competitor refresh) returns `source=graph`.
+   Workers restarted to load it. The 5th pillar is live for day one, set-and-
+   forget (no token-refresh chore).
 3. **Money-logic pytest harness — LARGELY DONE 2026-07-13.** `backend/tests/`
    (conftest + 4 suites, 31 passing / 3 tracked skips): overall-score
    aggregation (incl. the "0s but 85" regression), tier limits + quota
