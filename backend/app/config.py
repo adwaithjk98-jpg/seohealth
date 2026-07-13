@@ -5,6 +5,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./audithealth.db"
     app_env: str = "development"
 
+    # Product brand name — single source of truth for user-facing copy
+    # (email subjects/headers, etc.). The frontend's canonical name is
+    # "SEO Health"; keep this in sync with it.
+    app_name: str = "SEO Health"
+
     # Redis — used as RQ's transport and (later) the cross-process pub/sub
     # bridge for SSE audit events. Local default points at a loopback Redis
     # with no auth on db 0.
@@ -25,7 +30,9 @@ class Settings(BaseSettings):
     # When unset, the magic-link sender falls back to printing the link to stdout
     # (dev mode). Both must be set to actually send mail.
     resend_api_key: str = ""
-    from_email: str = "Local SEO Health Monitor <onboarding@resend.dev>"
+    # Display name should match ``app_name``; the address stays on the Resend
+    # sandbox until the seohealth.in sending domain is verified in prod.
+    from_email: str = "SEO Health <onboarding@resend.dev>"
 
     # Web Push (VAPID). When the keypair is unset (dev default), push sending is
     # a no-op — same "empty = disabled" convention as Resend/Sentry. Generate a
@@ -35,7 +42,7 @@ class Settings(BaseSettings):
     # the VAPID claims.
     vapid_public_key: str = ""
     vapid_private_key: str = ""
-    vapid_subject: str = "mailto:hello@yourdomain.in"
+    vapid_subject: str = "mailto:hello@seohealth.in"
 
     # Razorpay — subscription billing (Test Mode for Phase 3).
     # When ``razorpay_key_id`` is empty, the checkout endpoint falls back to a

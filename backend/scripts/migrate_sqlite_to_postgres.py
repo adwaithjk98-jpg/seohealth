@@ -103,7 +103,7 @@ def _reset_sequence(model, dst_conn) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Copy AuditHealth data from a SQLite file into a Postgres database.",
+        description="Copy SEO Health data from a SQLite file into a Postgres database.",
     )
     parser.add_argument(
         "--source",

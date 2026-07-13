@@ -29,8 +29,8 @@ class EmailDeliveryError(RuntimeError):
     """Raised when an email could not be handed off to the provider."""
 
 
-_MAGIC_LINK_SUBJECT = "Your sign-in link for Local SEO Health Monitor"
-_PRODUCT_NAME = "Local SEO Health Monitor"
+_PRODUCT_NAME = settings.app_name
+_MAGIC_LINK_SUBJECT = f"Your sign-in link for {_PRODUCT_NAME}"
 _PRODUCT_TAGLINE = "Apple Watch for your business's online presence."
 
 # Score-change notification (Phase 3) — emitted when an automated audit
