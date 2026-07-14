@@ -31,6 +31,9 @@
     competitors = [],
     businessName = 'Your business',
     metric = 'review_count',
+    // Deprecated / no-op: series identity now lives in the on-chart
+    // end-labels, so there is no separate legend row to toggle. Kept in the
+    // props so existing callers don't break.
     showLegend = true
   } = $props();
 
@@ -45,7 +48,9 @@
   const MUTED = '#6b6960';
 
   // ---- layout constants -------------------------------------------------
-  const H = 264; // total SVG height, x-axis band included
+  // Taller now that identity lives entirely in the on-chart end-labels (no
+  // legend row below eating vertical space).
+  const H = 300; // total SVG height, x-axis band included
   const M_TOP = 14;
   const M_BOTTOM = 26;
   const LABEL_GAP = 15; // min vertical space between end labels
@@ -59,21 +64,12 @@
     return /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
   }
 
-  /** @type {Set<string>} — series ids toggled off via the legend */
-  let hidden = $state(new Set());
-
-  /** @param {string} id */
-  function toggleSeries(id) {
-    const next = new Set(hidden);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    hidden = next;
-  }
-
-  // Reset hover + hides when the series set itself changes identity
-  // (e.g. deep dive switches comparison target).
+  // Clear any pinned/hovered readout when the metric (or comparison target)
+  // changes — the old snap index no longer means the same thing.
   $effect(() => {
     void metric;
+    void businessName;
+    pinnedIdx = null;
     hoverIdx = null;
   });
 
@@ -109,7 +105,7 @@
     return out;
   });
 
-  const visible = $derived(allSeries.filter((s) => !hidden.has(s.id) && s.points.length > 0));
+  const visible = $derived(allSeries.filter((s) => s.points.length > 0));
   const hasAnyPoint = $derived(allSeries.some((s) => s.points.length > 0));
 
   // ---- value formatting ---------------------------------------------------
@@ -305,12 +301,27 @@
     return [...set].sort((a, b) => a - b);
   });
 
+  // Two channels: a tap PINS the readout (persists — the primary path on
+  // touch, where there is no hover) and a mouse-hover PREVIEWS it
+  // transiently. The pin wins when both are set.
+  /** @type {number | null} */
+  let pinnedIdx = $state(null);
   /** @type {number | null} */
   let hoverIdx = $state(null);
+  const activeIdx = $derived(pinnedIdx ?? hoverIdx);
+
+  // Dismiss a pinned readout by tapping anywhere off the chart. onTap
+  // stops propagation, so in-chart taps never reach this listener.
+  $effect(() => {
+    if (pinnedIdx == null) return;
+    const close = () => (pinnedIdx = null);
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  });
 
   const hover = $derived.by(() => {
-    if (hoverIdx == null || hoverXs.length === 0) return null;
-    const t = hoverXs[Math.max(0, Math.min(hoverIdx, hoverXs.length - 1))];
+    if (activeIdx == null || hoverXs.length === 0) return null;
+    const t = hoverXs[Math.max(0, Math.min(activeIdx, hoverXs.length - 1))];
     const DAY = 86400_000;
     const rows = visible
       .map((s) => {
@@ -334,9 +345,8 @@
     };
   });
 
-  /** @param {PointerEvent} e */
-  function onPointer(e) {
-    if (hoverXs.length === 0) return;
+  /** Nearest snap-grid index to the pointer's x. @param {PointerEvent} e */
+  function nearestIdx(e) {
     const rect = /** @type {SVGSVGElement} */ (e.currentTarget).getBoundingClientRect();
     const px = e.clientX - rect.left;
     let best = 0;
@@ -348,19 +358,39 @@
         best = i;
       }
     });
-    hoverIdx = best;
+    return best;
+  }
+
+  /** Tap/click: pin the readout (toggle off if the same point is tapped). */
+  /** @param {PointerEvent} e */
+  function onTap(e) {
+    if (hoverXs.length === 0) return;
+    e.stopPropagation(); // keep the outside-tap-to-dismiss listener from firing
+    const idx = nearestIdx(e);
+    pinnedIdx = pinnedIdx === idx ? null : idx;
+    hoverIdx = null;
+  }
+
+  /** Mouse move: transient preview. While dragging (pressed) scrub the pin. */
+  /** @param {PointerEvent} e */
+  function onMove(e) {
+    if (hoverXs.length === 0) return;
+    const idx = nearestIdx(e);
+    if (pinnedIdx != null && (e.buttons > 0 || e.pressure > 0)) pinnedIdx = idx;
+    else hoverIdx = idx;
   }
 
   /** @param {KeyboardEvent} e */
   function onKey(e) {
     if (hoverXs.length === 0) return;
     if (e.key === 'ArrowRight') {
-      hoverIdx = hoverIdx == null ? hoverXs.length - 1 : Math.min(hoverIdx + 1, hoverXs.length - 1);
+      pinnedIdx = pinnedIdx == null ? hoverXs.length - 1 : Math.min(pinnedIdx + 1, hoverXs.length - 1);
       e.preventDefault();
     } else if (e.key === 'ArrowLeft') {
-      hoverIdx = hoverIdx == null ? 0 : Math.max(hoverIdx - 1, 0);
+      pinnedIdx = pinnedIdx == null ? 0 : Math.max(pinnedIdx - 1, 0);
       e.preventDefault();
     } else if (e.key === 'Escape') {
+      pinnedIdx = null;
       hoverIdx = null;
     }
   }
@@ -405,8 +435,8 @@
       aria-roledescription="interactive trend chart"
       aria-label={ariaSummary}
       tabindex="0"
-      onpointermove={onPointer}
-      onpointerdown={onPointer}
+      onpointermove={onMove}
+      onpointerdown={onTap}
       onpointerleave={() => (hoverIdx = null)}
       onkeydown={onKey}
       onblur={() => (hoverIdx = null)}
@@ -523,30 +553,6 @@
     {/if}
   {:else}
     <div style={`height:${H}px`}></div>
-  {/if}
-
-  {#if showLegend && allSeries.filter((s) => s.points.length > 0).length > 1}
-    <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1" role="group" aria-label="Toggle series">
-      {#each allSeries.filter((s) => s.points.length > 0) as s (s.id)}
-        {@const off = hidden.has(s.id)}
-        <button
-          type="button"
-          aria-pressed={!off}
-          class={`inline-flex min-h-[28px] items-center gap-1.5 rounded-full px-1.5 text-[11px] transition ${
-            off ? 'text-canvas-muted/60' : 'text-canvas-muted hover:text-canvas-ink'
-          }`}
-          onclick={() => toggleSeries(s.id)}
-          title={s.name}
-        >
-          <span
-            class={`inline-block h-0.5 w-3.5 rounded-full transition ${off ? 'opacity-25' : ''}`}
-            style={`background:${s.color}`}
-            aria-hidden="true"
-          ></span>
-          <span class={`max-w-[9rem] truncate ${off ? 'line-through' : ''}`}>{s.name}</span>
-        </button>
-      {/each}
-    </div>
   {/if}
 </div>
 

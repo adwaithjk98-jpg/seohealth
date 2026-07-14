@@ -5,6 +5,7 @@
 
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
   import TrendChart from '$lib/components/TrendChart.svelte';
+  import InfoHint from '$lib/components/InfoHint.svelte';
 
   /**
    * @type {{
@@ -299,14 +300,35 @@
     </div>
   {:else}
     <!-- Business tiles: the side-by-side glance across your businesses, and
-         the switch that scopes everything below to one of them. -->
+         the switch that scopes everything below to one of them. The label
+         names the big number (it was unlabelled) and the (i) explains the
+         blend + links through to the selected business in full. -->
     {#if tiles.length > 1}
-      <div
-        bind:this={tileRow}
-        class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1"
-        role="tablist"
-        aria-label="Choose a business"
-      >
+      <div class="space-y-2">
+        <div class="flex items-center gap-1.5 px-1">
+          <span class="text-xs font-semibold uppercase tracking-wide text-canvas-muted">
+            Your businesses · overall visibility
+          </span>
+          <InfoHint label="What is overall visibility?" align="right">
+            The number on each card is that business's <strong class="font-semibold text-canvas-ink"
+              >Overall visibility</strong
+            > — a 0–100 blend of its Google rating, review count and Instagram following.
+            {#if selected}
+              <a
+                href={`/businesses/${selected.business.id}`}
+                class="mt-2 block font-medium text-healthy-700 hover:underline"
+              >
+                See {selected.business.name} in full →
+              </a>
+            {/if}
+          </InfoHint>
+        </div>
+        <div
+          bind:this={tileRow}
+          class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1"
+          role="tablist"
+          aria-label="Choose a business"
+        >
         {#each tiles as tile (tile.id)}
           {@const active = selected?.business.id === tile.id}
           <button
@@ -338,6 +360,7 @@
             </p>
           </button>
         {/each}
+        </div>
       </div>
     {/if}
 
