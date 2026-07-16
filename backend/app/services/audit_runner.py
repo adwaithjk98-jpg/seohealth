@@ -530,6 +530,25 @@ async def run_audit(audit_id: int) -> None:
             if result.score is not None:
                 section_scores.append(result.score)
             prev_snap = prev_snapshots.get(section.value, {})
+            # ``highlight`` is a short newsy headline ("8 new reviews since last
+            # check") computed from this run's raw_data + the previous audit's.
+            # It's cosmetic live-feed decoration, so a bug in it must never be
+            # able to fail the audit — computed defensively here rather than
+            # inline in the publish dict, where a raise propagated to the outer
+            # handler and marked a fully-successful audit 'failed'.
+            try:
+                highlight = section_highlight(
+                    section.value,
+                    result.raw_data,
+                    prev_snap.get("raw"),
+                )
+            except Exception:
+                logger.exception(
+                    "section_highlight failed for audit_id=%s section=%s",
+                    audit_id,
+                    section.value,
+                )
+                highlight = None
             await stream.publish(
                 {
                     "type": "section_completed",
@@ -539,16 +558,9 @@ async def run_audit(audit_id: int) -> None:
                     "recommendation_count": len(result.recommendations),
                     "summary": result.raw_data,
                     # Live-diff payload. ``previous_score`` enables the
-                    # "was 65, +5" delta chip; ``highlight`` is a short
-                    # newsy headline ("8 new reviews since last check")
-                    # computed by section_highlight from this run's
-                    # raw_data and the previous audit's raw_data.
+                    # "was 65, +5" delta chip.
                     "previous_score": prev_snap.get("score"),
-                    "highlight": section_highlight(
-                        section.value,
-                        result.raw_data,
-                        prev_snap.get("raw"),
-                    ),
+                    "highlight": highlight,
                 }
             )
 

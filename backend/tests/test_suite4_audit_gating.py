@@ -334,3 +334,42 @@ def test_23_carried_checkmarks_survive_failed_reaudit(
         ("website", "Add your opening hours")
     }
     assert prev_id != reaudit_id  # sanity: two distinct audits in play
+
+
+def test_section_highlight_failure_does_not_fail_audit(
+    db, make_user, make_business, make_audit, monkeypatch
+):
+    """A raise inside the live-feed ``section_highlight`` decoration must never
+    fail the audit — it's a cosmetic headline, not a measurement. The call sits
+    inline in the ``section_completed`` publish, so before it was guarded a
+    highlight bug propagated to the outer handler and marked a fully-successful
+    audit 'failed'."""
+    biz = make_business(make_user())
+    audit = make_audit(biz, sections=[], status=AuditStatus.running)
+    db.commit()
+    audit_id = audit.id
+
+    _install_pipeline(
+        monkeypatch,
+        db,
+        [
+            (AuditSectionName.maps, _ok(88)),
+            (AuditSectionName.website, _ok(70)),
+            (AuditSectionName.performance, _ok(70)),
+            (AuditSectionName.instagram, _ok(80)),
+            (AuditSectionName.nap, _ok_nap(75)),
+        ],
+    )
+
+    # Override the benign stub with one that blows up on every section.
+    def _boom(*a, **k):
+        raise RuntimeError("highlight computation bug")
+
+    monkeypatch.setattr(audit_runner, "section_highlight", _boom)
+
+    run_audit_job(audit_id)
+
+    db.expire_all()
+    # Spine held and every section measured — the audit stands despite the
+    # decoration blowing up.
+    assert db.get(Audit, audit_id).status == AuditStatus.done
