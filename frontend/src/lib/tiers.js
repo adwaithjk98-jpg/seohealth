@@ -60,12 +60,13 @@ export const TIERS = {
     price: '₹1,999/mo',
     amount: '₹1,999',
     cadence: '/month',
-    tagline: 'Everything in Pro, turned up — deeper insight, faster audits, more eyes on the competition. Built to scale with you.',
+    // One line, like Pro's — and don't restate it in the first feature
+    // bullet; the card reads badge → name → tagline → receipts.
+    tagline: 'Everything in Pro, turned up.',
     features: [
-      'Everything in Pro, supercharged',
       'Audits & competitor refresh twice as often',
       '8 competitors tracked per business',
-      '4 discovery scans / month',
+      '4 discovery scans a month',
       'Run up to 5 businesses or locations'
     ],
     businesses: 5,

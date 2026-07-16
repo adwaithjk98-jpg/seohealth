@@ -135,5 +135,17 @@
         {/if}
       </div>
     {/if}
+
+    <!-- Persistent hand-off to the insights feed. "See details" above is
+         the quick in-place peek; this is the "so what" — always visible
+         so the strip never dead-ends. A quiet footer link rather than a
+         second button, so the two affordances don't compete. -->
+    <a
+      href="/dashboard/insights"
+      class="mt-3 flex items-center justify-between gap-2 border-t border-healthy-100 pt-3 text-xs font-medium text-healthy-700 hover:underline"
+    >
+      <span>See the full story in your insights</span>
+      <span aria-hidden="true">→</span>
+    </a>
   </section>
 {/if}

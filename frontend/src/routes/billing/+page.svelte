@@ -129,6 +129,11 @@
       rzp.open();
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not start the upgrade.';
+      // Always reset on failure — the tier-gated finally below never fires
+      // for a free user, which left the button on "Starting checkout…"
+      // forever when checkout creation itself threw.
+      upgrading = false;
+      upgradingTier = null;
     } finally {
       // For mock mode we finish here; for live mode `ondismiss` clears it.
       if (subscriptionData?.tier !== 'free') {
@@ -163,15 +168,13 @@
 
 <svelte:head><title>Billing & plan · SEO Health</title></svelte:head>
 
-<section class="space-y-8">
+<!-- This page's job for a free user is conversion, so the sell has to
+     start inside the first mobile viewport. The old header said the page
+     name three ways (chip + h1 + subtitle) and pushed the price and CTA
+     below the fold; one h1 + one value line keeps it honest and high. -->
+<section class="space-y-6">
   <header>
-    <p
-      class="inline-flex items-center gap-2 rounded-full border border-healthy-100 bg-healthy-50 px-3 py-1 text-xs font-medium text-healthy-700"
-    >
-      <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
-      Billing &amp; plan
-    </p>
-    <h1 class="mt-3 text-3xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
+    <h1 class="text-3xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
       Your subscription
     </h1>
     <p class="mt-2 text-sm text-canvas-muted">
@@ -289,11 +292,11 @@
       >
         {#key selected}
           <div
-            class={`card p-6 sm:p-8 ${
+            class={`card p-5 sm:p-8 ${
               selected === 'paid'
                 ? 'border-healthy-100 bg-healthy-50/30'
                 : selected === 'max'
-                  ? 'border-attention-100 bg-attention-50/30'
+                  ? 'border-canvas-ink/15'
                   : ''
             }`}
             in:fly={reduced({ y: 8, duration: 200, easing: quintOut })}
@@ -305,29 +308,33 @@
                 ★ Most chosen
               </span>
             {:else if selected === 'max'}
+              <!-- Max used to wear the amber `attention` ramp — the app's
+                   "needs attention" color — as its brand accent. Premium
+                   reads as ink, not caution. -->
               <span
-                class="inline-flex items-center gap-1.5 rounded-full bg-attention-100 px-3 py-1 text-xs font-medium text-attention-700"
+                class="inline-flex items-center gap-1.5 rounded-full bg-canvas-ink px-3 py-1 text-xs font-medium text-canvas"
               >
                 Twice-weekly updates
               </span>
             {/if}
 
-            <h3 class="mt-3 text-2xl font-semibold tracking-tight text-canvas-ink">
-              SEO Health
-              <span class={selected === 'max' ? 'text-attention-700' : 'text-healthy-700'}>
+            <!-- "SEO Health" prefix dropped — the brand is already in the
+                 top bar; inside the app the card only needs the plan name. -->
+            <h3 class="mt-3 text-2xl font-semibold tracking-tight">
+              <span class={selected === 'max' ? 'text-canvas-ink' : 'text-healthy-700'}>
                 {selectedMeta.name}
               </span>
             </h3>
             <p class="mt-1 text-sm text-canvas-muted">{selectedMeta.tagline}</p>
 
-            <p class="mt-5 flex items-baseline gap-1">
+            <p class="mt-4 flex items-baseline gap-1">
               <span class="text-4xl font-semibold tracking-tight text-canvas-ink">
                 {selectedMeta.amount}
               </span>
               <span class="text-sm text-canvas-muted">{selectedMeta.cadence}</span>
             </p>
 
-            <ul class="mt-5 space-y-3">
+            <ul class="mt-4 space-y-3">
               {#each selectedMeta.features as feat}
                 <li class="flex items-center gap-3 text-sm text-canvas-ink">
                   <span
@@ -352,7 +359,7 @@
               {/each}
             </ul>
 
-            <div class="mt-6">
+            <div class="mt-5">
               {#if selected === tier}
                 <p
                   class="rounded-xl bg-canvas-soft px-4 py-3 text-center text-sm font-medium text-canvas-ink"
