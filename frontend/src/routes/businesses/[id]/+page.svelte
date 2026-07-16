@@ -20,7 +20,7 @@
     topOpenRecommendations,
     formatRelativeTime
   } from '$lib/dashboard.js';
-  import ScoreGauge from '$lib/components/ScoreGauge.svelte';
+  import ScoreMeter from '$lib/components/ScoreMeter.svelte';
   import SectionCard from '$lib/components/SectionCard.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import BusinessProfileBanner from '$lib/components/BusinessProfileBanner.svelte';
@@ -207,6 +207,17 @@
     muted: 'bg-canvas-soft text-canvas-muted'
   };
 
+  // Backend timestamps are UTC-naive ISO — normalize like
+  // formatScheduleDate does before comparing calendar days.
+  const checkedToday = $derived.by(() => {
+    const value = audit?.finished_at;
+    if (!value) return false;
+    const iso = /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return false;
+    return date.toDateString() === new Date().toDateString();
+  });
+
   function findingHref(rec) {
     return `/audits/${auditId}/dashboard/sections/${rec.section}?finding=${rec.id}`;
   }
@@ -246,14 +257,20 @@
 {#if status === 'loading'}
   <section class="space-y-10" aria-busy="true" aria-live="polite">
     <span class="sr-only">Loading your latest health check…</span>
-    <header class="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
-      <div class="w-full max-w-md space-y-3">
-        <Skeleton height="h-6" width="w-32" rounded="full" />
-        <Skeleton height="h-10" width="w-3/4" rounded="lg" />
-        <Skeleton height="h-4" width="w-full" />
-        <Skeleton height="h-4" width="w-1/2" />
+    <header class="card p-5 sm:p-7 lg:p-8">
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:gap-10">
+        <div class="w-full max-w-md flex-1 space-y-3">
+          <Skeleton height="h-6" width="w-32" rounded="full" />
+          <Skeleton height="h-10" width="w-3/4" rounded="lg" />
+          <Skeleton height="h-4" width="w-full" />
+          <Skeleton height="h-4" width="w-1/2" />
+        </div>
+        <div class="space-y-3 border-t border-canvas-soft pt-5 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
+          <Skeleton height="h-4" width="w-24" />
+          <Skeleton height="h-14" width="w-32" rounded="lg" />
+          <Skeleton height="h-2" width="w-full" rounded="full" />
+        </div>
       </div>
-      <Skeleton height="h-44" width="w-44" rounded="full" />
     </header>
     <div>
       <Skeleton height="h-5" width="w-56" />
@@ -367,37 +384,47 @@
       />
     {/if}
 
-    <header class="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
-      <div>
-        <p
-          class="inline-flex items-center gap-2 rounded-full border border-healthy-100 bg-healthy-50 px-3 py-1 text-xs font-medium text-healthy-700"
-        >
-          <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
-          Today’s health check
-        </p>
-        <!-- The h1 is the business itself — the old "Hello, {name} 👋"
-             greeted the cafe, not the owner. The encouragement line below
-             carries the warmth, addressed to the person reading. -->
-        <h1 class="mt-3 text-3xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
-          {audit.business?.name || 'Your business'}
-        </h1>
-        <p class="mt-2 max-w-xl text-sm text-canvas-muted">
-          {scoreEncouragement(audit.overall_score)}
-        </p>
-        <p class="mt-3 text-xs text-canvas-muted">
-          Last checked {formatRelativeTime(audit.finished_at)}
-          {#if audit.business?.city}· {audit.business.city}{/if}
-        </p>
-      </div>
+    <!-- One hero card instead of open header + floating gauge. On mobile it
+         reads top-to-bottom like a sentence — who, how it's going, when —
+         then the receipt: the score tile. On desktop the tile sits right of
+         a hairline divider. -->
+    <header class="card p-5 sm:p-7 lg:p-8" in:fade={reduced({ duration: 300 })}>
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:gap-10">
+        <div class="min-w-0 flex-1">
+          <p
+            class="inline-flex items-center gap-2 rounded-full border border-healthy-100 bg-healthy-50 px-3 py-1 text-xs font-medium text-healthy-700"
+          >
+            <span class="h-1.5 w-1.5 rounded-full bg-healthy-500"></span>
+            <!-- Only claim "today" when it's true — this chip used to sit
+                 two lines above "Last checked a month ago". -->
+            {checkedToday ? 'Today’s health check' : 'Latest health check'}
+          </p>
+          <!-- The h1 is the business itself — the old "Hello, {name} 👋"
+               greeted the cafe, not the owner. The encouragement line below
+               carries the warmth, addressed to the person reading. -->
+          <h1 class="mt-3 text-3xl font-semibold tracking-tight text-canvas-ink sm:text-4xl">
+            {audit.business?.name || 'Your business'}
+          </h1>
+          <p class="mt-2 max-w-xl text-sm text-canvas-muted">
+            {scoreEncouragement(audit.overall_score)}
+          </p>
+          <p class="mt-3 text-xs text-canvas-muted">
+            Last checked {formatRelativeTime(audit.finished_at)}
+            {#if audit.business?.city}· {audit.business.city}{/if}
+          </p>
+        </div>
 
-      <div in:fade={reduced({ duration: 350 })}>
-        <ScoreGauge
-          score={audit.overall_score}
-          grade={audit.overall_grade}
-          label="Overall health"
-          trend={audit.overall_trend}
-          previousScore={audit.previous_overall_score}
-        />
+        <div
+          class="border-t border-canvas-soft pt-5 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:py-2 lg:pl-10 lg:pt-2"
+        >
+          <ScoreMeter
+            hero
+            score={audit.overall_score}
+            label="Overall health"
+            trend={audit.overall_trend}
+            previousScore={audit.previous_overall_score}
+          />
+        </div>
       </div>
     </header>
 

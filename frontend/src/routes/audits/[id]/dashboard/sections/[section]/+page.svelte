@@ -14,7 +14,7 @@
     severityRank,
     scoreLabel
   } from '$lib/dashboard.js';
-  import ScoreGauge from '$lib/components/ScoreGauge.svelte';
+  import ScoreMeter from '$lib/components/ScoreMeter.svelte';
   import FindingModal from '$lib/components/FindingModal.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
 
@@ -160,7 +160,11 @@
           <Skeleton height="h-4" width="w-full" />
         </div>
       </div>
-      <Skeleton height="h-40" width="w-40" rounded="full" />
+      <div class="w-full space-y-3 lg:w-64 lg:shrink-0">
+        <Skeleton height="h-4" width="w-24" />
+        <Skeleton height="h-10" width="w-28" rounded="lg" />
+        <Skeleton height="h-1.5" width="w-full" rounded="full" />
+      </div>
     </header>
     <div>
       <Skeleton height="h-5" width="w-48" />
@@ -243,11 +247,9 @@
         </div>
       </div>
 
-      <div in:fade={{ duration: 320 }}>
-        <ScoreGauge
+      <div class="w-full lg:w-64 lg:shrink-0" in:fade={{ duration: 320 }}>
+        <ScoreMeter
           score={section.score}
-          grade={section.grade}
-          size={170}
           label="Section score"
           trend={section.trend}
           previousScore={section.previous_score}
