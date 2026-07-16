@@ -32,3 +32,6 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Put the backend root on sys.path so `import app...` resolves without a
+# manual PYTHONPATH=. — the conftest imports app.models to register tables.
+pythonpath = ["."]
