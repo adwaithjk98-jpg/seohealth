@@ -84,10 +84,9 @@ chmod 600 .env.prod     # secrets — lock the file down
   just won't send until then)
 - `VAPID_*` — generate on the box:
   `docker run --rm ghcr.io/adwaithjk98-jpg/seohealth-backend:latest python scripts/gen_vapid_keys.py`
+- `APP_DOMAIN` — `app.seohealth.in` (Caddy reads this for the TLS cert; no
+  Caddyfile editing needed). Keep `FRONTEND_BASE_URL` = `https://<APP_DOMAIN>`.
 - Leave all `RAZORPAY_*` empty → checkout stays in mock mode (correct for beta).
-
-Also set the domain in the **Caddyfile** if you used a subdomain: change
-`seohealth.in {` to `app.seohealth.in {`.
 
 ---
 

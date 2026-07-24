@@ -10,7 +10,9 @@
 	email hello@seohealth.in
 }
 
-seohealth.in {
+# Domain comes from APP_DOMAIN in .env.prod (default app.seohealth.in), so the
+# box needs no Caddyfile edit — set it once in .env.prod alongside everything else.
+{$APP_DOMAIN:app.seohealth.in} {
 	# Never compress the live audit SSE stream. Even a streaming encoder can
 	# coalesce the tiny `text/event-stream` frames and stall the live-audit UX;
 	# the stream is the only long-lived response, so exclude just its path and

@@ -17,6 +17,10 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    environment:
+      # The public hostname Caddy gets a TLS cert for. Set in .env.prod; keep it
+      # in sync with FRONTEND_BASE_URL (which is https://<APP_DOMAIN>).
+      APP_DOMAIN: ${APP_DOMAIN:-app.seohealth.in}
     ports:
       - "80:80"
       - "443:443"
