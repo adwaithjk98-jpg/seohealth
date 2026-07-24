@@ -22,6 +22,7 @@ from app.auth_deps import admin_user
 from app.db import get_db
 from app.models import Audit, InsightReport, Subscription, User
 from app.models.enums import SubscriptionStatus, UserPlan
+from app.services import ops_health
 
 router = APIRouter()
 
@@ -69,15 +70,6 @@ def _server_health() -> dict:
     }
 
 
-def _queue_depths() -> dict:
-    # Imported lazily so a Redis hiccup degrades this one field instead of
-    # 500-ing the whole panel.
-    try:
-        from app.workers.queue import audit_queue, competitor_queue
-
-        return {"audits": audit_queue.count, "competitors": competitor_queue.count}
-    except Exception:
-        return {"audits": None, "competitors": None}
 
 
 @router.get("/admin/stats")
@@ -136,7 +128,9 @@ def admin_stats(
             "audits_7d": audits_7d,
         },
         # "is the single worker keeping up?" — the 2nd-worker trigger.
-        "queue_depth": _queue_depths(),
+        "queue_depth": ops_health.queue_depths(),
+        # "is the cron silently dead?" — last-dispatch heartbeat + stale flag.
+        "scheduler": ops_health.scheduler_status(),
         # The real server-upgrade signal (watch RAM/load, not user count).
         "server": _server_health(),
         # Quality signal — open "this insight is wrong" reports waiting on you.

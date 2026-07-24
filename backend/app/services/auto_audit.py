@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.db import SessionLocal
 from app.models import Audit, Business, User
 from app.models.enums import AuditStatus, AuditTrigger, UserPlan
+from app.services import ops_health
 from app.services import subscriptions as subs_service
 from app.workers.queue import enqueue_audit
 
@@ -183,6 +184,10 @@ def dispatch_due_audits(force_all: bool = False) -> dict[str, int | str]:
     bucket, spreading the load across the day. Pass ``force_all=True`` to
     bypass the hour gate (e.g. a manual "run every due audit now").
     """
+    # Stamp the scheduler heartbeat first thing — this records that the
+    # cron→queue→worker path is alive and firing, independent of whether this
+    # tick finds anything due. /api/health surfaces it as scheduler.stale.
+    ops_health.record_dispatch_beat()
     now = _now_naive()
     db = SessionLocal()
     enqueued: list[int] = []
