@@ -12,7 +12,18 @@
 }
 
 seohealth.in {
-	encode zstd gzip
+	# Never compress the live audit SSE stream. Even a streaming encoder can
+	# coalesce the tiny `text/event-stream` frames and stall the live-audit UX;
+	# the stream is the only long-lived response, so exclude just its path and
+	# still zstd/gzip everything else. (Nginx already sets `proxy_buffering off`
+	# and the API sends `X-Accel-Buffering: no` — this closes the last hop.)
+	# Caddy's reverse_proxy auto-flushes text/event-stream, so no flush_interval
+	# tweak is needed once compression is off the path.
+	@compressible {
+		not path /api/audits/*/stream
+	}
+	encode @compressible zstd gzip
+
 	reverse_proxy frontend:80
 }
 
