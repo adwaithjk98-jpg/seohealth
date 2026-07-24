@@ -16,6 +16,10 @@
 # Local SQLite backups (e.g. seohealth.db.bak.YYYYMMDD-HHMMSS) — never commit.
 *.db.bak*
 
+# Postgres backup dumps (scripts/backup_db.sh output) — never commit.
+backups/
+*.dump
+
 # Playwright-MCP browser logs (local tooling artifacts).
 .playwright-mcp/
 
