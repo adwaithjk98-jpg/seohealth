@@ -64,6 +64,11 @@ should not be touched:
    (seohealth.in, hello@seohealth.in); the code just hasn't caught up. Also stale:
    "Free during the beta" on the landing (there are paid tiers), placeholder support
    email `hello@yourdomain.in`, and almost no per-route `<title>`s.
+   **[Brand name ✅ resolved: manifest/title/apple-touch title, account support
+   email (`hello@seohealth.in`) and export filename (`seohealth-export-…`) all
+   read "SEO Health" as of the 2026-07-24 rebrand sweep. The non-brand sub-items
+   here (landing "Free during the beta" copy, per-route `<title>`s) are tracked
+   separately and NOT covered by that sweep.]**
 5. **A 280-line near-duplicate**: `/audits/[id]/dashboard` is a drift-prone copy of
    `/businesses/[id]` (it already misses the since-last-check strip the other has).
 6. **Small tone slip**: "Hello, Brewmorphia Cafe 👋" greets the *cafe*, not the owner.

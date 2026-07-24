@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AuditHealth — persistent self-heal watchdog for the dev stack + Tailscale funnel.
+# SEO Health — persistent self-heal watchdog for the dev stack + Tailscale funnel.
 #
 # Launched as a SINGLETON by start-dev.sh (which runs from the macOS Login
 # Item), so it lives in your GUI login session and inherits its file-access

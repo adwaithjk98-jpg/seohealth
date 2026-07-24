@@ -13,7 +13,7 @@
 
 .DS_Store
 
-# Local SQLite backups (e.g. audithealth.db.bak.YYYYMMDD-HHMMSS) — never commit.
+# Local SQLite backups (e.g. seohealth.db.bak.YYYYMMDD-HHMMSS) — never commit.
 *.db.bak*
 
 # Playwright-MCP browser logs (local tooling artifacts).

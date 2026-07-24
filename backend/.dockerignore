@@ -20,7 +20,7 @@ tests/__pycache__/
 *.db
 *.sqlite
 *.sqlite*
-audithealth.db
+seohealth.db
 
 # VCS / editor cruft.
 .git/

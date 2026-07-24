@@ -96,9 +96,14 @@ Data sources: Places API (New) · PageSpeed API · IG Graph business_discovery
    not buffer `/api/audits/*/stream`, and the Redis stream key has a 24 h
    TTL (a tab reopened later replays only if the audit is < 24 h old — the
    terminal-probe in the frontend covers the rest, but verify on prod).
-7. **Backend brand is still AuditHealth** in `from_email`, email templates
-   and assorted strings (frontend was unified to SEO Health on 2026-07-07).
-   Login = email deliverability, so the sender identity matters at deploy.
+7. **Backend rebrand DONE (2026-07-24).** `from_email`, email subjects/
+   templates, push payloads and FastAPI title all read "SEO Health"
+   (`app_name` is the single source of truth); the dev SQLite file was
+   renamed `audithealth.db` → `seohealth.db`. The only remaining `audithealth`
+   strings are the internal Postgres identity (DB/user/network names in
+   `docker-compose*.yml`) — deliberately left, since it's a service-internal
+   name, never user-visible, and renaming it churns the prod-boot launch gate
+   for no benefit.
 8. **Weekly digest has no idempotency table** (documented contract: cron
    once, accept double-send risk) and `dashboard_base_url` needs the prod
    config knob before real users receive one.

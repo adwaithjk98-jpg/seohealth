@@ -45,6 +45,8 @@ and the matched-threshold guard that kills "4.3★ is below … 4.3★" cards.
    bakes") — including B2B suppliers. The FTUE already collects
    `business_type`; the copy just never used it.
 6. Stale brand ("your AuditHealth profile") inside the IG-mismatch rec body.
+   **[✅ resolved by the 2026-07-24 rebrand sweep — no "AuditHealth" strings
+   remain in any rec body / `backend/app`.]**
 
 ## What changed
 

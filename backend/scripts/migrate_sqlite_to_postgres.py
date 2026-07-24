@@ -9,10 +9,10 @@ leaves the target database untouched.
 
 Usage:
     .venv/bin/python -m scripts.migrate_sqlite_to_postgres \\
-        --source ./audithealth.db \\
+        --source ./seohealth.db \\
         --target postgresql+psycopg://audithealth:audithealth@localhost:5432/audithealth
 
-Defaults: --source ./audithealth.db, --target $DATABASE_URL.
+Defaults: --source ./seohealth.db, --target $DATABASE_URL.
 """
 from __future__ import annotations
 
@@ -107,8 +107,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--source",
-        default="./audithealth.db",
-        help="Path to the source SQLite file (default: ./audithealth.db).",
+        default="./seohealth.db",
+        help="Path to the source SQLite file (default: ./seohealth.db).",
     )
     parser.add_argument(
         "--target",

@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./audithealth.db"
+    database_url: str = "sqlite:///./seohealth.db"
     app_env: str = "development"
 
     # Product brand name — single source of truth for user-facing copy

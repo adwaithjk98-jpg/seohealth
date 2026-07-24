@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AuditHealth — local dev stack launcher.
+# SEO Health — local dev stack launcher.
 #
 # Brings up everything the phone PWA needs to be live behind the existing
 # Tailscale Funnel: uvicorn (API), the audit + competitor RQ workers, and
