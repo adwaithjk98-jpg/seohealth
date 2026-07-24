@@ -50,14 +50,26 @@ def _generate_token(nbytes: int = 32) -> str:
 # --- Magic link ---------------------------------------------------------------
 
 
-def issue_magic_link(db: DbSession, email: str) -> tuple[User, str]:
-    """Find-or-create the user, issue a fresh magic-link token, return the token."""
+def issue_magic_link(
+    db: DbSession, email: str, phone: str | None = None
+) -> tuple[User, str]:
+    """Find-or-create the user, issue a fresh magic-link token, return the token.
+
+    ``phone`` is the optional number from the signup form. This endpoint is
+    shared by signup and returning-login (anti-enumeration: it never reveals
+    which), so we only *set* the phone when it wouldn't overwrite one already on
+    file — on a brand-new user, or as a gentle backfill for a legacy user who
+    has none yet. Deliberate changes to an existing number go through the
+    account page (PATCH /auth/me), not this path.
+    """
     email_norm = email.strip().lower()
     user = db.query(User).filter_by(email=email_norm).one_or_none()
     if user is None:
-        user = User(email=email_norm)
+        user = User(email=email_norm, phone=phone)
         db.add(user)
         db.flush()
+    elif phone and not user.phone:
+        user.phone = phone
 
     token = _generate_token()
     user.magic_link_token = token

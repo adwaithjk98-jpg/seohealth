@@ -23,6 +23,12 @@ class User(Base):
     # Friendly greeting label. NULL until the user fills it in via the
     # FTUE questionnaire; the dashboard falls back to the email-prefix.
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Optional contact number, collected at signup (one nullable field). This
+    # is the pre-beta foundation for S1 (WhatsApp-first weekly recaps): the
+    # channel needs a number on file before the feature ships. Stored lightly
+    # cleaned, as the user typed it — E.164 normalisation is deferred to the
+    # WhatsApp send build. NULL until the user provides one.
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     magic_link_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     magic_link_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     plan: Mapped[UserPlan] = mapped_column(

@@ -27,9 +27,37 @@ router = APIRouter()
 # Real validation happens implicitly when the magic link gets clicked.
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Characters we tolerate in a typed phone number before counting digits.
+_PHONE_ALLOWED_RE = re.compile(r"^[0-9+\-()\s]+$")
+
+
+def _normalize_phone(v: str | None) -> str | None:
+    """Light, shape-only phone cleanup — mirrors the permissive email check.
+
+    Empty/whitespace → ``None`` (the field is optional). Otherwise collapse
+    internal whitespace and keep the number roughly as typed; we don't force
+    E.164 here (that's the WhatsApp send build's job, once we know the country).
+    A number with fewer than 7 or more than 15 digits, or stray characters, is
+    rejected so obvious junk doesn't get stored.
+    """
+    if v is None:
+        return None
+    cleaned = " ".join(v.split())
+    if not cleaned:
+        return None
+    if not _PHONE_ALLOWED_RE.match(cleaned):
+        raise ValueError("not a valid phone number")
+    digits = sum(c.isdigit() for c in cleaned)
+    if digits < 7 or digits > 15:
+        raise ValueError("not a valid phone number")
+    return cleaned
+
 
 class RequestLinkBody(BaseModel):
     email: str
+    # Optional signup number — the S1 (WhatsApp recap) foundation. Blank on a
+    # returning login is fine; it's only *collected* here, never required.
+    phone: str | None = None
 
     @field_validator("email")
     @classmethod
@@ -38,6 +66,11 @@ class RequestLinkBody(BaseModel):
         if not _EMAIL_RE.match(v):
             raise ValueError("not a valid email address")
         return v
+
+    @field_validator("phone")
+    @classmethod
+    def _check_phone(cls, v: str | None) -> str | None:
+        return _normalize_phone(v)
 
 
 class VerifyTokenBody(BaseModel):
@@ -51,6 +84,8 @@ class MeResponse(BaseModel):
     # Friendly greeting label. NULL until the user fills the FTUE
     # questionnaire; the frontend falls back to the email-prefix.
     display_name: str | None = None
+    # Optional contact number (S1 WhatsApp-recap foundation). NULL until given.
+    phone: str | None = None
     # Whether the weekly digest email is on for this user (account-page toggle).
     weekly_digest_enabled: bool = True
     # Founder/admin flag — lets the SPA show the admin stats link only to admins.
@@ -67,7 +102,17 @@ class UpdateMeBody(BaseModel):
     no plan, no email, no admin knobs."""
 
     display_name: str | None = Field(default=None, max_length=120)
+    # Passing "" clears the saved number (→ NULL). Same shape check as signup.
+    phone: str | None = Field(default=None, max_length=32)
     weekly_digest_enabled: bool | None = Field(default=None)
+
+    @field_validator("phone")
+    @classmethod
+    def _check_phone(cls, v: str | None) -> str | None:
+        # Preserve "" as an explicit clear signal; normalise anything else.
+        if v is not None and v.strip() == "":
+            return ""
+        return _normalize_phone(v)
 
 
 def _build_me_response(db: DbSession, user: User) -> "MeResponse":
@@ -96,6 +141,7 @@ def _build_me_response(db: DbSession, user: User) -> "MeResponse":
         email=user.email,
         plan=user.plan.value,
         display_name=user.display_name,
+        phone=user.phone,
         weekly_digest_enabled=user.weekly_digest_enabled,
         is_admin=is_admin(user),
         subscription_state=state,
@@ -138,7 +184,7 @@ def request_magic_link(
     provider rejects the send, surface a 500 so the user knows to retry
     rather than silently dropping their sign-in attempt.
     """
-    _, token = auth_service.issue_magic_link(db, payload.email)
+    _, token = auth_service.issue_magic_link(db, payload.email, payload.phone)
     try:
         email_service.send_magic_link_email(
             payload.email, auth_service.magic_link_url(token)
@@ -215,6 +261,9 @@ def update_me(
     if payload.display_name is not None:
         cleaned = payload.display_name.strip()
         user.display_name = cleaned or None
+    if payload.phone is not None:
+        # Already normalised by the validator; "" means "clear it" → NULL.
+        user.phone = payload.phone or None
     if payload.weekly_digest_enabled is not None:
         user.weekly_digest_enabled = payload.weekly_digest_enabled
     db.commit()
@@ -293,6 +342,7 @@ def export_my_data(
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
+            "phone": user.phone,
             "plan": user.plan.value,
             "signup_date": _to_iso(user.signup_date),
             "weekly_digest_enabled": user.weekly_digest_enabled,

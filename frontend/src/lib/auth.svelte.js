@@ -39,6 +39,7 @@ import { goto } from '$app/navigation';
  * @property {string} email
  * @property {string} plan
  * @property {string | null} display_name
+ * @property {string | null} [phone]
  * @property {boolean} weekly_digest_enabled
  * @property {boolean} [is_admin]
  * @property {SubscriptionState | null} subscription_state
@@ -116,13 +117,18 @@ export async function loadCurrentUser() {
   return _inflightSessionLoad;
 }
 
-/** @param {string} email */
-export async function requestMagicLink(email) {
+/**
+ * @param {string} email
+ * @param {string} [phone] Optional contact number collected at signup (S1
+ *   WhatsApp-recap foundation). Omitted/blank is fine — it's never required.
+ */
+export async function requestMagicLink(email, phone) {
+  const body = phone && phone.trim() ? { email, phone: phone.trim() } : { email };
   const res = await fetch('/api/auth/request-link', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ email })
+    body: JSON.stringify(body)
   });
   if (!res.ok) throw new Error(await readJsonError(res));
   return res.json();
@@ -145,8 +151,9 @@ export async function verifyMagicLink(token) {
 
 /**
  * Update the signed-in user's profile. Pass an empty ``display_name`` to clear
- * the name (frontend falls back to the email-prefix).
- * @param {{ display_name?: string | null, weekly_digest_enabled?: boolean }} patch
+ * the name (frontend falls back to the email-prefix); pass an empty ``phone``
+ * to clear the saved number.
+ * @param {{ display_name?: string | null, phone?: string | null, weekly_digest_enabled?: boolean }} patch
  */
 export async function updateCurrentUser(patch) {
   const res = await fetch('/api/auth/me', {
@@ -162,7 +169,8 @@ export async function updateCurrentUser(patch) {
 }
 
 /** Friendly greeting label. Falls back to the local-part of the email
- *  (everything before the ``@``) when ``display_name`` is unset. */
+ *  (everything before the ``@``) when ``display_name`` is unset.
+ * @param {CurrentUser | null | undefined} user */
 export function greetingName(user) {
   if (!user) return '';
   if (user.display_name && user.display_name.trim()) return user.display_name.trim();

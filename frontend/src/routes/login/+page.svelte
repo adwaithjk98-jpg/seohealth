@@ -11,6 +11,7 @@
   const isDev = import.meta.env.DEV;
 
   let email = $state('');
+  let phone = $state('');
   let submitting = $state(false);
   let sent = $state(false);
   let errorMessage = $state(/** @type {string | null} */ (null));
@@ -29,7 +30,7 @@
     submitting = true;
     errorMessage = null;
     try {
-      await requestMagicLink(email.trim());
+      await requestMagicLink(email.trim(), phone.trim());
       sent = true;
     } catch (err) {
       // Backend returns HTTP 500 with a friendly `detail` message when Resend
@@ -83,6 +84,24 @@
             required
             bind:value={email}
           />
+        </div>
+
+        <div class="space-y-2">
+          <label class="label" for="login-phone">
+            Phone <span class="font-normal text-canvas-muted">(optional)</span>
+          </label>
+          <input
+            id="login-phone"
+            type="tel"
+            class="field"
+            placeholder="+91 98765 43210"
+            autocomplete="tel"
+            inputmode="tel"
+            bind:value={phone}
+          />
+          <p class="text-xs text-canvas-muted">
+            So we can reach you if an audit needs your attention. We'll never share it.
+          </p>
         </div>
 
         {#if errorMessage}

@@ -66,6 +66,27 @@
     }
   }
 
+  // --- Phone (optional; S1 WhatsApp-recap foundation) ---
+  let phoneDraft = $state('');
+  let phoneSaving = $state(false);
+  let phoneError = $state(/** @type {string | null} */ (null));
+  $effect(() => {
+    if (ready) phoneDraft = user?.phone ?? '';
+  });
+  async function savePhone() {
+    if (phoneSaving) return;
+    phoneSaving = true;
+    phoneError = null;
+    try {
+      // "" clears the saved number (→ NULL server-side).
+      await updateCurrentUser({ phone: phoneDraft.trim() });
+    } catch (err) {
+      phoneError = err instanceof Error ? err.message : 'Could not save your number.';
+    } finally {
+      phoneSaving = false;
+    }
+  }
+
   // --- Weekly digest toggle ---
   let digestSaving = $state(false);
   async function toggleDigest() {
@@ -237,6 +258,34 @@
             {nameSaving ? 'Saving…' : 'Save'}
           </button>
         </div>
+      </div>
+
+      <div class="space-y-1.5">
+        <label class="label" for="acct-phone">
+          Phone <span class="font-normal text-canvas-muted">(optional)</span>
+        </label>
+        <div class="flex items-center gap-2">
+          <input
+            id="acct-phone"
+            type="tel"
+            class="field flex-1"
+            bind:value={phoneDraft}
+            placeholder="+91 98765 43210"
+            autocomplete="tel"
+            inputmode="tel"
+            maxlength="32"
+          />
+          <button type="button" class="btn-primary" onclick={savePhone} disabled={phoneSaving}>
+            {phoneSaving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        {#if phoneError}
+          <p class="text-xs text-action-700">{phoneError}</p>
+        {:else}
+          <p class="text-xs text-canvas-muted">
+            So we can reach you if an audit needs your attention. We'll never share it.
+          </p>
+        {/if}
       </div>
     </div>
 
