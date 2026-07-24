@@ -5,7 +5,6 @@
 #   - ports 80 and 443 are open to the internet.
 #
 # Used only with the caddy compose override (see docker-compose.caddy.yml).
-
 {
 	# Let's Encrypt account email (expiry/issue notices). Change if you prefer.
 	email hello@seohealth.in
