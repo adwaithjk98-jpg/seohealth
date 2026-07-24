@@ -26,7 +26,7 @@ x-backend-env: &backend-env
   # override file flips this back to :5173 for the host Vite workflow.
   FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost}
   RESEND_API_KEY: ${RESEND_API_KEY:-}
-  FROM_EMAIL: ${FROM_EMAIL:-Local SEO Health Monitor <onboarding@resend.dev>}
+  FROM_EMAIL: ${FROM_EMAIL:-SEO Health <onboarding@resend.dev>}
   MAGIC_LINK_TTL_MINUTES: ${MAGIC_LINK_TTL_MINUTES:-15}
   SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
   SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-session}
@@ -40,7 +40,7 @@ x-backend-env: &backend-env
   RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
   PAID_PLAN_PRICE_LABEL: ${PAID_PLAN_PRICE_LABEL:-₹549 / month}
   RAZORPAY_MAX_PLAN_ID: ${RAZORPAY_MAX_PLAN_ID:-}
-  MAX_PLAN_PRICE_LABEL: ${MAX_PLAN_PRICE_LABEL:-₹2,500 / month}
+  MAX_PLAN_PRICE_LABEL: ${MAX_PLAN_PRICE_LABEL:-₹1,999 / month}
   # Founder/admin allowlist for /api/admin/* (the stats panel).
   ADMIN_EMAILS: ${ADMIN_EMAILS:-}
   # Web Push (VAPID). Empty ⇒ push sending is a no-op (dev/smoke-test default).

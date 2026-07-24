@@ -1,0 +1,24 @@
+# Registry override — makes the stack PULL pre-built images from GHCR instead of
+# building them on the host. This is the production path: a small VPS should
+# never run `docker build` (the frontend build can OOM it). CI builds the images
+# (.github/workflows/build-images.yml); the box just pulls + runs.
+#
+# Used by deploy.sh (see deploy/README.md). Deploy = `... pull` then `... up -d`
+# — NEVER pass `--build` in prod, or it would rebuild locally and re-tag over the
+# pulled image (defeating the point + risking an OOM).
+#
+# IMAGE_TAG pins a specific build for deploy/rollback (e.g. IMAGE_TAG=sha-abc1234
+# in .env.prod, or inline: `IMAGE_TAG=sha-abc1234 ./deploy.sh`). Defaults to the
+# latest pushed image.
+
+services:
+  api:
+    image: ghcr.io/adwaithjk98-jpg/seohealth-backend:${IMAGE_TAG:-latest}
+  worker:
+    image: ghcr.io/adwaithjk98-jpg/seohealth-backend:${IMAGE_TAG:-latest}
+  competitor-worker:
+    image: ghcr.io/adwaithjk98-jpg/seohealth-backend:${IMAGE_TAG:-latest}
+  scheduler:
+    image: ghcr.io/adwaithjk98-jpg/seohealth-backend:${IMAGE_TAG:-latest}
+  frontend:
+    image: ghcr.io/adwaithjk98-jpg/seohealth-frontend:${IMAGE_TAG:-latest}

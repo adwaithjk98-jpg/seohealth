@@ -25,9 +25,10 @@
 #     mid-debugging is annoying.
 #
 # Not in this override (intentionally):
-#   - `read_only: true` on the API / worker — Chromium writes to /tmp and
-#     /dev/shm; a read-only rootfs without matching tmpfs mounts breaks
-#     audits in a way that's painful to diagnose.
+#   - `read_only: true` on the API / worker — deferred. The stack is Chromium-
+#     free now (Places API over httpx), but uvicorn / pip / tempfiles still
+#     touch the rootfs; a read-only rootfs would need matching tmpfs mounts to
+#     avoid surprising breakage. A hardening pass for later, not launch.
 #   - Host port publishes for 5432 / 6379 — Postgres and Redis must stay
 #     on the internal compose network only.
 
