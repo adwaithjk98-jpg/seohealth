@@ -58,6 +58,11 @@ class RequestLinkBody(BaseModel):
     # Optional signup number — the S1 (WhatsApp recap) foundation. Blank on a
     # returning login is fine; it's only *collected* here, never required.
     phone: str | None = None
+    # DPDP consent from the signup form's required checkbox. Defaults False so
+    # an older client (or a direct API call) can still sign in, but only an
+    # explicit true is ever recorded as consent — we don't infer it from the
+    # request merely existing. Recorded once, at account creation.
+    consent: bool = False
 
     @field_validator("email")
     @classmethod
@@ -184,7 +189,9 @@ def request_magic_link(
     provider rejects the send, surface a 500 so the user knows to retry
     rather than silently dropping their sign-in attempt.
     """
-    _, token = auth_service.issue_magic_link(db, payload.email, payload.phone)
+    _, token = auth_service.issue_magic_link(
+        db, payload.email, payload.phone, consent=payload.consent
+    )
     try:
         email_service.send_magic_link_email(
             payload.email, auth_service.magic_link_url(token)

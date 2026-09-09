@@ -38,6 +38,13 @@ class User(Base):
         DateTime, server_default=func.now(), nullable=False
     )
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # DPDP consent record. Set once, when the account is first created from the
+    # signup form's required checkbox (services/auth.issue_magic_link). NULL for
+    # users who predate the checkbox — we don't backfill a consent nobody gave.
+    # ``consent_version`` pins which policy text was agreed to so a later
+    # rewrite doesn't retroactively change what someone consented to.
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Whether the user receives the weekly digest email. Default on; the
     # account page + the email's unsubscribe link flip it. Dispatch filters on
     # it so opt-out is honored before we ever send to real users.

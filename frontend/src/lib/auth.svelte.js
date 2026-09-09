@@ -122,8 +122,13 @@ export async function loadCurrentUser() {
  * @param {string} [phone] Optional contact number collected at signup (S1
  *   WhatsApp-recap foundation). Omitted/blank is fine — it's never required.
  */
-export async function requestMagicLink(email, phone) {
-  const body = phone && phone.trim() ? { email, phone: phone.trim() } : { email };
+export async function requestMagicLink(email, phone, consent = false) {
+  /** @type {{ email: string; phone?: string; consent?: boolean }} */
+  const body = { email };
+  if (phone && phone.trim()) body.phone = phone.trim();
+  // Only ever send an explicit true — the backend records consent at account
+  // creation and must not infer it from the request simply having been made.
+  if (consent) body.consent = true;
   const res = await fetch('/api/auth/request-link', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -12,6 +12,7 @@
 
   let email = $state('');
   let phone = $state('');
+  let consent = $state(false);
   let submitting = $state(false);
   let sent = $state(false);
   let errorMessage = $state(/** @type {string | null} */ (null));
@@ -21,7 +22,7 @@
     if (authState.user) await goto('/dashboard');
   });
 
-  const canSubmit = $derived(!submitting && email.trim().length > 3);
+  const canSubmit = $derived(!submitting && email.trim().length > 3 && consent);
 
   /** @param {SubmitEvent} event */
   async function handleSubmit(event) {
@@ -30,7 +31,7 @@
     submitting = true;
     errorMessage = null;
     try {
-      await requestMagicLink(email.trim(), phone.trim());
+      await requestMagicLink(email.trim(), phone.trim(), consent);
       sent = true;
     } catch (err) {
       // Backend returns HTTP 500 with a friendly `detail` message when Resend
@@ -103,6 +104,32 @@
             So we can reach you if an audit needs your attention. We'll never share it.
           </p>
         </div>
+
+        <label class="flex items-start gap-2.5 text-xs text-canvas-muted">
+          <input
+            id="login-consent"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 shrink-0 rounded border-canvas-line text-healthy-600 focus:ring-healthy-500"
+            bind:checked={consent}
+            required
+          />
+          <span>
+            I agree to the
+            <a
+              class="font-medium text-healthy-700 hover:underline"
+              href="https://seohealth.in/terms"
+              target="_blank"
+              rel="noopener noreferrer">Terms of Service</a
+            >
+            and
+            <a
+              class="font-medium text-healthy-700 hover:underline"
+              href="https://seohealth.in/privacy"
+              target="_blank"
+              rel="noopener noreferrer">Privacy Policy</a
+            >, and consent to SEO Health processing my data as described there.
+          </span>
+        </label>
 
         {#if errorMessage}
           <div

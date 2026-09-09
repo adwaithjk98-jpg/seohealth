@@ -47,11 +47,17 @@ def _generate_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
+# Which published policy text a signup consented to. Bump this (and only this)
+# when the Privacy Policy / Terms on seohealth.in change materially, so existing
+# consent records keep pointing at the wording that was actually agreed to.
+CONSENT_VERSION = "2026-08-29"
+
+
 # --- Magic link ---------------------------------------------------------------
 
 
 def issue_magic_link(
-    db: DbSession, email: str, phone: str | None = None
+    db: DbSession, email: str, phone: str | None = None, consent: bool = False
 ) -> tuple[User, str]:
     """Find-or-create the user, issue a fresh magic-link token, return the token.
 
@@ -61,11 +67,19 @@ def issue_magic_link(
     file — on a brand-new user, or as a gentle backfill for a legacy user who
     has none yet. Deliberate changes to an existing number go through the
     account page (PATCH /auth/me), not this path.
+
+    ``consent`` is the signup form's required checkbox. We stamp it only on the
+    branch that creates the account, because that is the moment being consented
+    to; a returning user re-ticking the box on every sign-in must not overwrite
+    the original record. Existing users stay NULL rather than being backfilled.
     """
     email_norm = email.strip().lower()
     user = db.query(User).filter_by(email=email_norm).one_or_none()
     if user is None:
         user = User(email=email_norm, phone=phone)
+        if consent:
+            user.consent_at = _now()
+            user.consent_version = CONSENT_VERSION
         db.add(user)
         db.flush()
     elif phone and not user.phone:
