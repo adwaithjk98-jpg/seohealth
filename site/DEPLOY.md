@@ -1,6 +1,7 @@
 # Deploying the SEO Health site to Cloudflare Pages
 
-Static site: `index.html`, `privacy.html`, `terms.html`, `styles.css`, `favicon.svg`.
+Static site: `index.html`, `privacy.html`, `terms.html`, `refund.html`, `contact.html`,
+`styles.css`, `favicon.svg`.
 No build step — these files are the deploy output. Goal: live at `https://seohealth.in`
 with `https://seohealth.in/privacy` working (needed for Meta verification + app review).
 
@@ -61,7 +62,9 @@ reappear and values match **character-for-character** before switching nameserve
 
 ## 5. Verify
 - `https://seohealth.in` loads the landing page (no more "Server Not Found").
-- `https://seohealth.in/privacy` and `/terms` load.
+- `https://seohealth.in/privacy`, `/terms`, `/refund`, and `/contact` all load.
+  **All four are checked by Razorpay during merchant KYC review** — if any 404s, the
+  activation gets queried. `/#pricing` must also show the plans and prices.
 - Send a test email to `hello@seohealth.in` and confirm it still arrives in Zoho — proves the
   MX records survived the nameserver change.
 
@@ -73,12 +76,17 @@ this repo's `site/` folder to Pages for auto-deploys. The content here is intent
 > ⚠️ Editing the repo files is **not** enough — the live site is this separate Cloudflare Pages
 > deployment. Any change (copy, styles, legal pages) must be **re-deployed** here to go live.
 
-## 7. Pending before real launch (deferred — NOT blocking Meta now)
-- **Finalize `privacy.html` + `terms.html`** — current copy is a sensible *template*, not legally
-  reviewed. Good enough for Meta Business Verification + App Review today; replace with proper
-  legal/compliance copy before public launch.
-- Build out a fuller landing page (currently "private beta" brochure).
-- **When you do either: re-deploy to Cloudflare Pages** (see section 6) — repo edits don't ship
+## 7. Pending before real launch
+- ✅ **Policy pages done (2026-08-29)** — `privacy.html` and `terms.html` rewritten for Razorpay
+  merchant review + DPDP (payments/Razorpay disclosure, grievance officer, consent basis, honest
+  cookie section); `refund.html` and `contact.html` added; `index.html` now carries a real pricing
+  section. Not lawyer-reviewed — a ₹1–3k CA/legal pass is still worth doing before public launch.
+- ⚠️ **Pricing is duplicated here.** `index.html#pricing` and `terms.html` §3 restate the plan
+  limits that `backend/app/services/subscriptions.py` (`TIER_LIMITS`) actually enforces. If those
+  limits change, these pages become a live misrepresentation on a page Razorpay reviewed —
+  update both sides together.
+- Build out a fuller landing page (still a "private beta" brochure).
+- **Any change: re-deploy to Cloudflare Pages** (see section 6) — repo edits don't ship
   themselves. Consider wiring git-connected auto-deploy so future edits publish automatically.
 
 ## What this unblocks
