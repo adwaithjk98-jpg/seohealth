@@ -34,6 +34,32 @@ any existing schedule for the dispatcher before re-adding it.
 from __future__ import annotations
 
 import logging
+import os
+import time
+
+# Pin this process to UTC *before* rq_scheduler is imported and any cron is
+# registered.
+#
+# Every cron string below is written and documented in UTC, but rq_scheduler
+# does not interpret them that way. ``rq_scheduler.utils.get_next_scheduled_time``
+# computes the next fire time from a naive ``datetime.now()`` and only then
+# calls ``.astimezone(UTC)`` — so a naive *local* wall-clock time is what the
+# cron actually matches against, and the result is merely re-expressed in UTC.
+# Its ``use_local_timezone`` flag changes that output representation, not the
+# interpretation; there is no setting that makes it read the string as UTC.
+#
+# The times therefore only mean what the docstrings say while the process's
+# local timezone *is* UTC. That holds in production by luck rather than intent
+# (python:3.12-slim-bookworm has no /etc/localtime, so containers default to
+# UTC) and it silently stops holding the moment anyone sets TZ on the box or in
+# compose — a very tempting thing to do on an India-facing product so the logs
+# read in IST. On a developer's machine in IST it is already false: the weekly
+# digest resolves to 03:30 IST instead of the intended 09:00 IST.
+#
+# Forcing it here makes the guarantee explicit and identical everywhere,
+# instead of depending on ambient deployment config.
+os.environ["TZ"] = "UTC"
+time.tzset()
 
 from rq_scheduler import Scheduler
 
