@@ -2,10 +2,10 @@
 # SEO Health — local dev stack launcher.
 #
 # Brings up everything the phone PWA needs to be live behind the existing
-# Tailscale Funnel: uvicorn (API), the audit + competitor RQ workers, and
-# the Vite dev server. Tailscale itself is *not* started here — the daemon
-# is configured to auto-start at login, and `tailscale funnel` state is
-# persisted by Tailscale across reboots.
+# Tailscale Funnel: uvicorn (API), the audit + competitor RQ workers, the
+# rq-scheduler cron clock, and the Vite dev server. Tailscale itself is
+# *not* started here — the daemon is configured to auto-start at login,
+# and `tailscale funnel` state is persisted by Tailscale across reboots.
 #
 # Idempotent: any existing instance of each process is killed before
 # starting a new one, so re-running the script is safe.
@@ -14,6 +14,7 @@
 #   /tmp/audit_backend.log
 #   /tmp/audit_worker.log
 #   /tmp/competitor_worker.log
+#   /tmp/scheduler.log
 #   /tmp/vite.log
 #   /tmp/start-dev.log  (this script's own boot log)
 #
@@ -74,6 +75,7 @@ log "==== boot start-dev.sh (quiet=$QUIET) ===="
 pkill -f "uvicorn.*app.main"          >/dev/null 2>&1 || true
 pkill -f "scripts.run_worker"         >/dev/null 2>&1 || true
 pkill -f "scripts.run_competitor_worker" >/dev/null 2>&1 || true
+pkill -f "scripts.run_scheduler" >/dev/null 2>&1 || true
 # Vite is just `node vite` — narrow the pattern so we don't kill unrelated node processes.
 pkill -f "node .*vite" >/dev/null 2>&1 || true
 
@@ -105,6 +107,19 @@ log "started audit worker"
 )
 log "started competitor worker"
 
+# --- start rq-scheduler (the cron clock) ----------------------------------
+# Without this nothing ever enqueues auto-audits, the weekly digest, the
+# competitor refresh or the prune sweep — the app looks perfectly healthy
+# while every scheduled feature silently does nothing. It was missing from
+# this script for weeks; /api/health reports `scheduler.stale` so the gap
+# is at least visible from a phone.
+(
+  cd "$BACKEND_DIR"
+  source .venv/bin/activate
+  nohup $ARCH_PREFIX python -m scripts.run_scheduler > /tmp/scheduler.log 2>&1 &
+)
+log "started scheduler"
+
 # --- start Vite -----------------------------------------------------------
 # vite.config.js binds to 127.0.0.1 — Tailscale Funnel proxies to it.
 (
@@ -133,9 +148,14 @@ if ! pgrep -f "scripts.run_competitor_worker" >/dev/null 2>&1; then
   log "WARN: competitor worker isn't running — check /tmp/competitor_worker.log"
   ok=0
 fi
+if ! pgrep -f "scripts.run_scheduler" >/dev/null 2>&1; then
+  log "WARN: scheduler isn't running — auto-audits, the weekly digest and the"
+  log "      competitor refresh will silently never fire. See /tmp/scheduler.log"
+  ok=0
+fi
 
 if [[ $ok -eq 1 ]]; then
-  log "==== all four processes up — PWA should be live ===="
+  log "==== all five processes up — PWA should be live ===="
 else
   log "==== some processes failed — see warnings above ===="
 fi
