@@ -120,7 +120,13 @@ class UpdateMeBody(BaseModel):
         return _normalize_phone(v)
 
 
-def _build_me_response(db: DbSession, user: User) -> "MeResponse":
+def build_me_response(db: DbSession, user: User) -> "MeResponse":
+    """The signed-in user payload: profile + tier + caps + subscription row.
+
+    Public because ``/api/home`` composes it alongside the business list —
+    one source of truth for what "who am I" means, so the consolidated
+    home payload can never drift from ``/auth/me`` or ``/auth/session``.
+    """
     limits = subs_service.limits_for_tier(user.plan)
     business_count = subs_service.count_active_businesses(db, user.id)
     latest = subs_service.latest_subscription(db, user.id)
@@ -218,7 +224,7 @@ def verify_magic_link(
         )
     session = auth_service.create_session(db, user)
     _set_session_cookie(response, session.token)
-    return _build_me_response(db, user)
+    return build_me_response(db, user)
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -251,7 +257,7 @@ def me(
     db: DbSession = Depends(get_db),
     user: User = Depends(current_user),
 ) -> MeResponse:
-    return _build_me_response(db, user)
+    return build_me_response(db, user)
 
 
 @router.patch("/auth/me", response_model=MeResponse)
@@ -275,7 +281,7 @@ def update_me(
         user.weekly_digest_enabled = payload.weekly_digest_enabled
     db.commit()
     db.refresh(user)
-    return _build_me_response(db, user)
+    return build_me_response(db, user)
 
 
 def _to_iso(value: datetime | None) -> str | None:
@@ -403,4 +409,4 @@ def session_probe(
     user = db.get(User, db_session.user_id)
     if user is None:
         return SessionResponse(user=None)
-    return SessionResponse(user=_build_me_response(db, user))
+    return SessionResponse(user=build_me_response(db, user))

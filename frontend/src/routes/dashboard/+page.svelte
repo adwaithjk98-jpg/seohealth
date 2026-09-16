@@ -20,8 +20,24 @@
   import WeeklyInsightsButton from '$lib/components/WeeklyInsightsButton.svelte';
   import { MAX } from '$lib/tiers.js';
 
-  /** @type {{ data: { businesses: any[] | null, error: string | null, heroAudit: any | null } }} */
+  /** @type {{ data: {
+   *   businesses: any[] | null,
+   *   error: string | null,
+   *   heroAudit: any | null,
+   *   stale?: boolean,
+   *   cachedAt?: number,
+   *   offline?: boolean
+   * } }} */
   let { data } = $props();
+
+  // The home payload is painted from the local cache first so the app opens
+  // instantly, then swapped for fresh data a moment later. While that's in
+  // flight we say so plainly — showing a remembered score as if it were a
+  // live one would make the app feel fast by being quietly dishonest.
+  const showingCached = $derived(data?.stale === true);
+  // The refresh behind the cached copy failed. Saying "refreshing…" at that
+  // point would be a lie the user can't see through, so we say what's true.
+  const refreshFailed = $derived(data?.offline === true);
 
   const businesses = $derived(data?.businesses ?? []);
   const errorMessage = $derived(
@@ -253,6 +269,20 @@
     {:else}
       <p class="mt-2 text-sm text-canvas-muted">
         Pick a business to see its latest health check, or add a new one.
+      </p>
+    {/if}
+    {#if showingCached}
+      <p class="mt-2 flex items-center gap-1.5 text-xs text-canvas-muted" aria-live="polite">
+        <span
+          class="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-canvas-muted/60"
+          class:animate-pulse={!refreshFailed}
+          aria-hidden="true"
+        ></span>
+        {#if refreshFailed}
+          Showing your last check — we couldn't reach the server.
+        {:else}
+          Showing your last check while we refresh…
+        {/if}
       </p>
     {/if}
   </header>

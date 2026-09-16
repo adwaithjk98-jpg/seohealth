@@ -1,21 +1,19 @@
-// Single fetch for /api/businesses shared across the Overview, Audit, and
-// Competitors tabs. Each child page's data automatically merges the parent
-// loader's output, so tab-switches no longer pay a fresh round-trip just
-// to re-read the same business list.
+// One read for every dashboard surface.
 //
-// If a child needs additional data (e.g. /dashboard/competitors fans out
-// for competitors), it stays in that page's own +page.js and reads
-// businesses via ``await parent()``.
+// This used to fetch /api/businesses, and the Overview page then fetched the
+// hero audit *after* it via `await parent()` — two serial round trips before
+// the home screen could paint, plus the root layout's session probe as a
+// third. `/api/home` returns all three payloads together, and `loadHome`
+// serves the last-known copy from cache while it revalidates, so the app
+// opens at render speed rather than network speed.
+//
+// The returned shape is unchanged (`businesses` / `error`, plus `heroAudit`
+// which the Overview page reads off merged layout data), so every child page
+// consuming `data.businesses` keeps working exactly as before.
+
+import { loadHome } from '$lib/home.js';
 
 /** @type {import('@sveltejs/kit').Load} */
-export async function load({ fetch }) {
-  const res = await fetch('/api/businesses', { credentials: 'same-origin' });
-  if (res.status === 401) {
-    return { businesses: null, error: 'unauthenticated' };
-  }
-  if (!res.ok) {
-    return { businesses: [], error: `Couldn't load your businesses (${res.status})` };
-  }
-  const businesses = await res.json();
-  return { businesses, error: null };
+export function load(event) {
+  return loadHome(event);
 }

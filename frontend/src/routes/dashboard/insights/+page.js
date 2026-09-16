@@ -22,6 +22,12 @@ export async function load({ fetch, parent }) {
 
   const settled = await Promise.allSettled(
     businesses.map(async (/** @type {any} */ b) => {
+      // Single-business accounts (every Pro) already have this exact audit in
+      // the home payload — reusing it saves the only round trip this page
+      // would otherwise make.
+      if (businesses.length === 1 && parentData?.heroAudit) {
+        return { business: b, audit: parentData.heroAudit };
+      }
       const res = await fetch(`/api/businesses/${b.id}/latest-audit`, {
         credentials: 'same-origin'
       });

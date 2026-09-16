@@ -12,6 +12,7 @@ from app.api.businesses import router as businesses_router
 from app.api.competitors import router as competitors_router
 from app.api.discovery_scan import router as discovery_scan_router
 from app.api.health import router as health_router
+from app.api.home import router as home_router
 from app.api.push import router as push_router
 from app.api.recommendations import router as recommendations_router
 from app.api.subscriptions import router as subscriptions_router
@@ -33,6 +34,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(health_router, prefix="/api", tags=["health"])
+app.include_router(home_router, prefix="/api", tags=["home"])
 app.include_router(admin_router, prefix="/api", tags=["admin"])
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(businesses_router, prefix="/api", tags=["businesses"])

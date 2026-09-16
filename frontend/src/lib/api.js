@@ -1,4 +1,12 @@
-// Tiny fetch wrappers for the dashboard. Keep it dependency-free.
+// Tiny fetch wrappers for the dashboard.
+//
+// The mutating helpers below drop the cached home payload (`home-cache.js`)
+// whenever they change something the home screen shows — the business list,
+// its open-recommendation counts, or the latest audit. Without that, the next
+// cold open would paint a correct-looking screen describing the world as it
+// was before the user's last action.
+
+import { clearHomeCache } from '$lib/home-cache.js';
 
 async function readJsonError(res) {
   try {
@@ -69,6 +77,7 @@ export async function patchRecommendation(recId, fixStatus) {
     body: JSON.stringify({ fix_status: fixStatus })
   });
   if (!res.ok) throw new Error(await readJsonError(res));
+  clearHomeCache(); // open-recommendation counts are on the home screen
   return res.json();
 }
 
@@ -101,6 +110,8 @@ export async function startAudit(businessId) {
     err.status = res.status;
     throw err;
   }
+  // A new audit is about to replace the hero the cache is holding.
+  clearHomeCache();
   return res.json();
 }
 
@@ -186,6 +197,7 @@ export async function archiveBusiness(businessId) {
     credentials: 'same-origin'
   });
   if (!res.ok && res.status !== 204) throw new Error(await readJsonError(res));
+  clearHomeCache(); // one fewer business on the home screen
 }
 
 /**
@@ -229,6 +241,7 @@ export async function updateBusinessProfile(businessId, patch) {
     err.status = res.status;
     throw err;
   }
+  clearHomeCache(); // opting a pillar in or out moves the overall score
   return res.json();
 }
 
@@ -250,6 +263,7 @@ export async function setBusinessSchedule(businessId, cadence) {
     err.status = res.status;
     throw err;
   }
+  clearHomeCache(); // cadence + next-run ride along on the business row
   return res.json();
 }
 

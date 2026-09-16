@@ -12,6 +12,7 @@
 // complexity for no real safety win (the backend enforces ownership).
 
 import { goto } from '$app/navigation';
+import { clearHomeCache } from '$lib/home-cache.js';
 
 /**
  * @typedef {Object} TierLimits
@@ -53,6 +54,10 @@ export const authState = $state({
 });
 
 export async function refreshCurrentUser() {
+  // Callers reach for this right after changing something the home screen
+  // shows (tier, business count), so the stored payload is stale by
+  // definition — drop it rather than let the next open paint the old world.
+  clearHomeCache();
   // Lighter sibling of loadCurrentUser — re-fetches after a state-changing
   // action (upgrade, business add) so the header / Add-business gates pick
   // up the new tier + business_count without a full page reload.
@@ -149,6 +154,8 @@ export async function verifyMagicLink(token) {
   });
   if (!res.ok) throw new Error(await readJsonError(res));
   const user = await res.json();
+  // Whoever was cached here before is not necessarily who just signed in.
+  clearHomeCache();
   authState.user = user;
   authState.loaded = true;
   return user;
@@ -185,6 +192,7 @@ export function greetingName(user) {
 
 export async function logout() {
   await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  clearHomeCache();
   authState.user = null;
   authState.loaded = true;
   await goto('/login');

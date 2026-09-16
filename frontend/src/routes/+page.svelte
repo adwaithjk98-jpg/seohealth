@@ -4,6 +4,7 @@
   import { quintOut } from 'svelte/easing';
   import { goto } from '$app/navigation';
   import { authState, loadCurrentUser } from '$lib/auth.svelte.js';
+  import { clearHomeCache } from '$lib/home-cache.js';
   import { MAX } from '$lib/tiers.js';
   import InfoHint from '$lib/components/InfoHint.svelte';
 
@@ -167,6 +168,8 @@
 
       if (!businessRes.ok) throw new Error(await readError(businessRes));
       const business = await businessRes.json();
+      // The home payload we may have cached predates this business.
+      clearHomeCache();
 
       const auditRes = await fetch('/api/audits', {
         method: 'POST',

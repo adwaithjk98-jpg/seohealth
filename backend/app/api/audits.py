@@ -216,6 +216,21 @@ def get_audit_detail(
     return AuditDetailResponse(**build_audit_detail(db, audit))
 
 
+def latest_completed_audit(db: Session, business_id: int) -> Audit | None:
+    """Most recently finished ``done`` audit for a business, or None.
+
+    Public because ``/api/home`` inlines the same hero audit into its
+    consolidated payload; sharing the query keeps "latest" meaning one
+    thing (finished_at desc, id as the tiebreak for same-second finishes).
+    """
+    return (
+        db.query(Audit)
+        .filter(Audit.business_id == business_id, Audit.status == AuditStatus.done)
+        .order_by(desc(Audit.finished_at), desc(Audit.id))
+        .first()
+    )
+
+
 @router.get(
     "/businesses/{business_id}/latest-audit",
     response_model=AuditDetailResponse,
@@ -229,12 +244,7 @@ def get_latest_audit_for_business(
     if business is None or not _user_owns_business(business, user):
         raise HTTPException(status_code=404, detail="business not found")
 
-    audit = (
-        db.query(Audit)
-        .filter(Audit.business_id == business_id, Audit.status == AuditStatus.done)
-        .order_by(desc(Audit.finished_at), desc(Audit.id))
-        .first()
-    )
+    audit = latest_completed_audit(db, business_id)
     if audit is None:
         raise HTTPException(
             status_code=404, detail="no completed audit yet for this business"

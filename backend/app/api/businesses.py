@@ -248,11 +248,13 @@ def create_business(
     return _to_response(db, business, user)
 
 
-@router.get("/businesses", response_model=list[BusinessResponse])
-def list_businesses(
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> list[BusinessResponse]:
+def build_business_list(db: Session, user: User) -> list[BusinessResponse]:
+    """The caller's active businesses, newest first, each with its latest-audit
+    rollup and open-recommendation count.
+
+    Public because ``/api/home`` serves the same list in its consolidated
+    payload — extracted so the two can't drift.
+    """
     rows = (
         db.query(Business)
         .filter(Business.user_id == user.id, Business.archived_at.is_(None))
@@ -277,6 +279,14 @@ def list_businesses(
             _to_response(db, b, user, open_count=open_counts.get(latest_id, 0))
         )
     return out
+
+
+@router.get("/businesses", response_model=list[BusinessResponse])
+def list_businesses(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[BusinessResponse]:
+    return build_business_list(db, user)
 
 
 @router.get("/businesses/{business_id}", response_model=BusinessResponse)
